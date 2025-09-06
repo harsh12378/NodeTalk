@@ -1,6 +1,7 @@
 import  { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import API_BASE_URL from "../config";
+import { useGoogleLogin } from "@react-oauth/google";
 export default function Login() {
   const [isLoading,setIsLoading]=useState(false);
   const [email, setEmail] = useState('');
@@ -37,9 +38,25 @@ export default function Login() {
     alert("some server error");
     console.error("Error logging in:", error);
   }
-
-  
   };
+    const handleGoogleSubmit = useGoogleLogin({
+       onSuccess: async (tokenResponse) => {  
+       const response = await fetch(`${API_BASE_URL}/api/auth/googleAuth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_token: tokenResponse.access_token }),
+      });
+  
+      const data = await response.json();
+      if(response.ok){
+      localStorage.setItem("token",data.token);
+        navigate("/allusers");
+      }else{
+        alert("some server error");
+      }
+    },
+     onError: (err) => console.log("Login Failed", err),
+    });
 
  return (
 <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-green-900 px-4">
@@ -83,6 +100,31 @@ export default function Login() {
         <NavLink to="/signup" className="ml-2 text-green-400 hover:underline font-semibold">Sign Up</NavLink>
       </div>
     </form>
+     {/* OR Divider */}
+      <div className="flex items-center my-6">
+        <div className="flex-grow border-t border-green-700"></div>
+        <span className="px-4 text-gray-400 font-medium">OR</span>
+        <div className="flex-grow border-t border-green-700"></div>
+      </div>
+      
+      {/* Google Sign In Button */}
+      <div className="flex justify-center">
+        <button
+          className="flex items-center gap-2 px-6 py-2 bg-white text-green-700 font-semibold rounded-lg shadow hover:bg-green-50 border border-green-400 transition duration-200"
+          type="button"
+          onClick={handleGoogleSubmit}
+        >
+          <svg className="w-5 h-5" viewBox="0 0 48 48">
+            <g>
+              <path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.7 33.1 29.8 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c2.7 0 5.2.9 7.2 2.5l6.4-6.4C33.5 5.1 28.1 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21c10.5 0 20-8.1 20-21 0-1.3-.1-2.7-.5-4z"/>
+              <path fill="#34A853" d="M6.3 14.7l7 5.1C15.5 16.1 19.4 13 24 13c2.7 0 5.2.9 7.2 2.5l6.4-6.4C33.5 5.1 28.1 3 24 3c-7.2 0-13.4 3.1-17.7 8.1z"/>
+              <path fill="#FBBC05" d="M24 44c5.6 0 10.7-1.9 14.7-5.1l-6.8-5.6C29.8 38 27 39 24 39c-5.7 0-10.5-3.7-12.2-8.8l-7 5.4C7.9 40.7 15.4 44 24 44z"/>
+              <path fill="#EA4335" d="M44.5 20H24v8.5h11.7c-1.2 3.2-4.7 7.5-11.7 7.5-6.6 0-12-5.4-12-12s5.4-12 12-12c2.7 0 5.2.9 7.2 2.5l6.4-6.4C33.5 5.1 28.1 3 24 3c-7.2 0-13.4 3.1-17.7 8.1z"/>
+            </g>
+          </svg>
+          Continue with Google
+        </button>
+      </div>
   </div>
 </div>
 );

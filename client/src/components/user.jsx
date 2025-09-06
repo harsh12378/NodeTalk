@@ -83,6 +83,22 @@ const handleAddFriend = async(e) => {
     year: lastSeenDate.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
   });
 };
+const getColorForLetter = (letter) => {
+  const gradients = [
+    'bg-gradient-to-br from-red-400 to-red-600',
+    'bg-gradient-to-br from-blue-400 to-blue-600',
+    'bg-gradient-to-br from-green-400 to-green-600',
+    'bg-gradient-to-br from-purple-400 to-purple-600',
+    'bg-gradient-to-br from-pink-400 to-pink-600',
+    'bg-gradient-to-br from-indigo-400 to-indigo-600',
+    'bg-gradient-to-br from-yellow-400 to-orange-500',
+    'bg-gradient-to-br from-teal-400 to-teal-600'
+  ];
+  
+  const charCode = letter.toUpperCase().charCodeAt(0);
+  const gradientIndex = charCode % gradients.length;
+  return gradients[gradientIndex];
+};
   
 return (
   <article
@@ -91,19 +107,34 @@ return (
     style={{margin: 0, maxWidth: '100vw', boxSizing: 'border-box'}}
   >
     {/* Profile Picture with Status Border */}
-    <div className="relative flex-shrink-0 mr-4">
-      <img
-        className={`
-          w-16 h-16 rounded-full object-cover 
-          border-4 ${isOnline ? 'border-green-500' : 'border-gray-600'}
-        `}
-        src={dp}
-        alt={`${user.name}'s profile picture`}
-        onError={(e) => {
-          e.target.src = "/default-avatar.png";
-        }}
-      />
-    </div>
+        <div className="relative flex-shrink-0 mr-4">
+  {user.avatar ? (
+    <img
+      className={`
+        w-16 h-16 rounded-full object-cover 
+        border-4 ${isOnline ? 'border-green-500' : 'border-gray-600'}
+      `}
+      src={user.avatar}
+      alt={`${user.name}'s profile picture`}
+      onError={(e) => {
+        e.target.style.display = 'none';
+        e.target.nextElementSibling.style.display = 'flex';
+      }}
+    />
+  ) : null}
+  
+    <div
+    className={`
+      ${user.avatar ? 'hidden' : 'flex'}
+      w-16 h-16 rounded-full items-center justify-center
+      border-4 ${isOnline ? 'border-green-500' : 'border-gray-600'}
+      ${getColorForLetter(user.name?.charAt(0) || 'U')}
+      text-white font-semibold text-xl
+    `}
+  >
+    {user.name?.charAt(0).toUpperCase() || 'U'}
+  </div>
+   </div>
 
     {/* User Info */}
     <div className="flex flex-col justify-center flex-1">

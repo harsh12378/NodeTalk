@@ -49,8 +49,7 @@ export default function ChattingBox({ receiver = {} }) {
             from: msg.senderId===myId?"you":"them",
             text:msg.text,
             createdAt: msg.createdAt
-          }))
-          console.log(formatted);
+          }));
          setMessages(formatted);
         }catch(error){
         alert("Failed to get message");
@@ -101,9 +100,7 @@ export default function ChattingBox({ receiver = {} }) {
   
   const sendMessage = async () => {
     if (!input.trim()) return; 
-    
     const messageText = input.trim();
-   
     setInput(''); // Clear input
     setSending(true);
     
