@@ -11,13 +11,21 @@ dotenv.config();
 const app = express();
 
 app.use(express.json());
-
+const allowedOrigins = [
+  "http://localhost:5173",                  // local dev
+  "https://nodetalk-client.vercel.app",     // deployed frontend
+];
 
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
   credentials: true,
 }));
-
 
 const DBPath = process.env.MONGO_URI;
 async function connectDB() {
@@ -47,11 +55,18 @@ app.use('/api/messages', verifyToken, messageRoutes);
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     methods: ["GET", "POST"],
     credentials: true,
   }
 });
+
 setupSocket(io);
 
 const port = process.env.PORT||5000;
