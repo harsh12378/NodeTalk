@@ -1,13 +1,14 @@
 
 import {useState} from "react";
 import dp from '../assets/dp.jpg'
+import API_BASE_URL from "../config";
 export default function Requests({request, onUpdate}){
-    const [loading, setLoading]=useState(false);
+const [loading, setLoading]=useState(false);
 const acceptRequest=async(friendId,id)=>{
 const token=localStorage.getItem('token');
 setLoading(true);
     try{
-      const response = await fetch(`http://localhost:5000/api/users/accept`, {
+      const response = await fetch(`${API_BASE_URL}/api/users/accept`, {
           method: "POST",  
           headers: {
          "Authorization": `Bearer ${token}`,
@@ -32,7 +33,7 @@ setLoading(true);
         const token=localStorage.getItem('token');
         setLoading(true);
         try{
-      const response = await fetch(`http://localhost:5000/api/users/reject`, {
+      const response = await fetch(`${API_BASE_URL}/api/users/reject`, {
           method: "POST",  
           headers: {
          "Authorization": `Bearer ${token}`,

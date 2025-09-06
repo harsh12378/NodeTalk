@@ -3,6 +3,7 @@ import dp from '../assets/dp.jpg'
 import { useState,useEffect } from 'react';
 import socket from "../socket"
 import { useNavigate } from "react-router-dom";
+import API_BASE_URL from "../config";
 export default function User({ user }) {
 const [friendshipStatus, setFriendshipStatus] = useState(user.friendshipStatus||"none");
 const [isOnline, setIsOnline] = useState(user.isOnline);
@@ -29,7 +30,7 @@ useEffect(() => {
   const addFriend=async (id)=>{
          const token=localStorage.getItem('token');
     try{
-      const response = await fetch(`http://localhost:5000/api/users/request`, {
+      const response = await fetch(`${API_BASE_URL}/api/users/request`, {
           method: "POST",  
           headers: {
          "Authorization": `Bearer ${token}`,

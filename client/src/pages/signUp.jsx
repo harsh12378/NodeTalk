@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGoogleLogin } from "@react-oauth/google";
+import API_BASE_URL from "../config";
 export default function Register() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -15,7 +16,7 @@ export default function Register() {
         alert("password and confirm passowrd do not match");
        }
 
-    const response = await fetch('http://localhost:5000/api/auth/signup', {
+    const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -40,7 +41,7 @@ export default function Register() {
   };
   const handleGoogleSubmit = useGoogleLogin({
      onSuccess: async (tokenResponse) => {  
-     const response = await fetch("http://localhost:5000/api/auth/googleAuth", {
+     const response = await fetch(`${API_BASE_URL}/api/auth/googleAuth`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ access_token: tokenResponse.access_token }),

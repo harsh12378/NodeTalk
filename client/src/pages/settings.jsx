@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-
+import API_BASE_URL from "../config";
 export default function SettingsPage() {
     const [formData, setFormData]=useState({});
     const [loading, setLoading]=useState(true);
@@ -12,7 +12,7 @@ export default function SettingsPage() {
         try{
   
      const token = localStorage.getItem("token");
-     const response = await fetch("http://localhost:5000/api/auth/me", {
+     const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
      method: "GET",
      headers: {
     "Authorization": `Bearer ${token}`,
@@ -68,7 +68,7 @@ const handleSubmit = async (e) => {
   try {
     const token = localStorage.getItem("token");
 
-    const response = await fetch("http://localhost:5000/api/auth/update", {
+    const response = await fetch(`${API_BASE_URL}/api/auth/update`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",

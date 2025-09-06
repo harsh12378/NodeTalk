@@ -1,6 +1,7 @@
 import { useState,useMemo, useEffect,useRef,useLayoutEffect } from "react";
 import dp from '../assets/dp.jpg'
 import socket from "../socket"
+import API_BASE_URL from "../config";
 export default function ChattingBox({ receiver = {} }) {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);
@@ -27,7 +28,7 @@ export default function ChattingBox({ receiver = {} }) {
         try{
           
           const token=localStorage.getItem('token');
-         const response = await fetch(`http://localhost:5000/api/messages/${currentReceiver._id}`, {
+         const response = await fetch(`${API_BASE_URL}/${currentReceiver._id}`, {
           method: "GET", 
           headers: {
          "Authorization": `Bearer ${token}`
@@ -110,7 +111,7 @@ export default function ChattingBox({ receiver = {} }) {
         receiverId:currentReceiver._id,
         message:messageText,
       })
-      const response = await fetch("http://localhost:5000/api/messages/send", {
+      const response = await fetch(`${API_BASE_URL}/api/messages/send`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

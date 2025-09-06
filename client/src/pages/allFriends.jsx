@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useState } from "react";
 import FriendCard from "../components/friendCard"
-
+import API_BASE_URL from "../config";
 export default function Friends(){
 
 
@@ -16,7 +16,7 @@ const fetchFriends= async()=>{
            setLoading(true);
            try{
              const token=localStorage.getItem('token')
-           const response= await fetch(`http://localhost:5000/api/users/friendlist`,{
+           const response= await fetch(`${API_BASE_URL}/api/users/friendlist`,{
             method: 'GET',
             headers: {
                 "Content-Type": "application/json",

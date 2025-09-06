@@ -1,6 +1,7 @@
 
 import { useState, useEffect } from "react";
 import User from "../components/user"
+import API_BASE_URL from "../config";
 export default function Home(){
 
 const [users,setUsers]=useState([]);
@@ -12,7 +13,7 @@ useEffect(()=>{
 
            setLoading(true);
            const token=localStorage.getItem('token')
-           const response= await fetch('http://localhost:5000/api/users/allusers',{
+           const response= await fetch(`${API_BASE_URL}/api/users/allusers`,{
             method: 'GET',
             headers: {
                 "Content-Type": "application/json",

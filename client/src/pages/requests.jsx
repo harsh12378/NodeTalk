@@ -1,6 +1,4 @@
-
-
-
+import API_BASE_URL from "../config";
 import { useState, useEffect } from "react";
 
 import Requests from "../components/pendingRequests"
@@ -14,7 +12,7 @@ useEffect(()=>{
 
            setLoading(true);
            const token=localStorage.getItem('token')
-           const response= await fetch(`http://localhost:5000/api/users/requestlist`,{
+           const response= await fetch(`${API_BASE_URL}/api/users/requestlist`,{
             method: 'GET',
             headers: {
                 "Content-Type": "application/json",

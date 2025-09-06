@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import dp from '../assets/dp.jpg'
-
+import API_BASE_URL from "../config";
 export default function FriendCard({friend,onUpdate}){
 
 const [loading,setLoading]=useState(false);
@@ -12,7 +12,7 @@ const removeFriend=async(friendId,id)=>{
 const token=localStorage.getItem('token');
 setLoading(true);
     try{
-      const response = await fetch(`http://localhost:5000/api/users/removefriend`, {
+      const response = await fetch(`${API_BASE_URL}/api/users/removefriend`, {
           method: "POST",  
           headers: {
          "Authorization": `Bearer ${token}`,
