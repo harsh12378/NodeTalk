@@ -28,25 +28,25 @@ export default function ChattingBox({ receiver = {} }) {
         try{
           
           const token=localStorage.getItem('token');
-         const response = await fetch(`${API_BASE_URL}/${currentReceiver._id}`, {
+         const response = await fetch(`${API_BASE_URL}/api/messages/${currentReceiver._id}`, {
           method: "GET", 
           headers: {
          "Authorization": `Bearer ${token}`
     
-  }
-});
+      }});
    
          if(!response.ok){
         throw new Error('Failed to get messages');
           }
           const data=await response.json();          
           const myId = JSON.parse(atob(token.split(".")[1])).userId;
-          
+          console.log("hello",data);
           const formatted=data.messages.map(msg=>({
             from: msg.senderId===myId?"you":"them",
             text:msg.text,
             createdAt: msg.createdAt
           }))
+          console.log(formatted);
          setMessages(formatted);
         }catch(error){
         alert("Failed to get message");

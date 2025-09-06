@@ -19,7 +19,7 @@ useEffect(()=>{
                "Authorization": `Bearer ${token}`,
             }
            })
-           
+           const data= await response.json();
            if(response.status===200){
             setRequests(data.requests);
 

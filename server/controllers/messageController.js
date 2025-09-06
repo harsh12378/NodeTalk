@@ -43,8 +43,9 @@ exports.sendMessage=async(req,res)=>{
     }
 }
 exports.getMessages=async(req,res)=>{
+    
    try{
-
+        
    const senderId=req.user.userId;
    if(!senderId){
         console.log("sender not found in get messages");

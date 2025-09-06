@@ -8,8 +8,6 @@ function setupSocket(io) {
     });
 
     socket.on("sendMessage", ({ senderId, receiverId, message }) => {
-      console.log(`💬 Message from ${senderId} to ${receiverId}:`, message);
-
       io.to(receiverId).emit("receiveMessage", {
         senderId,
         message,
