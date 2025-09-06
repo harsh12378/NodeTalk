@@ -95,6 +95,18 @@ export default function Header() {
   >
     Friends
   </NavLink>
+  <NavLink
+    to="/pendingrequests"
+    className={({ isActive }) =>
+      `pb-1 text-lg font-medium transition-colors ${
+        isActive
+          ? "text-green-400 border-b-2 border-green-600"
+          : "text-green-200 hover:text-green-600"
+      }`
+    }
+  >
+    Requests
+  </NavLink>
 </nav>
       </div>
 

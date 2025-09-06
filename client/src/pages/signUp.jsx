@@ -121,7 +121,7 @@ export default function Register() {
            {isLoading && (          
            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>          
             )}         
-         {isLoading ? 'Logging in...' : 'Login'}       
+         {isLoading ? 'Signing in...' : 'SignIn'}       
          </button>
           <div className="text-center mt-4">
             <span className="text-gray-400">Already have an account?</span>
