@@ -7,10 +7,12 @@ export default function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword,setConfirmPassword]=useState('');
+  const [isLoading,setIsLoading]=useState(false);
+
   const navigate=useNavigate();
   const handleRegister = async (e) => {
     e.preventDefault();
-
+    setIsLoading(true);
  try {
        if(password!==confirmPassword){
         alert("password and confirm passowrd do not match");
@@ -24,7 +26,7 @@ export default function Register() {
       body: JSON.stringify({ name, email, password}),
     });
     if( response.status===201){
-
+       setIsLoading(false);
       navigate('/')
       alert("User created successfully");
     }
@@ -35,6 +37,7 @@ export default function Register() {
       alert("Server error cannot register new user");
     }
   } catch (error) {
+    alert("some server error");
     console.error("Error registering user:", error);
   }
 
@@ -110,12 +113,16 @@ export default function Register() {
               placeholder="Confirm password"
             />
           </div>
-          <button
-            type="submit"
-            className="w-full py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition duration-200 shadow-md"
-          >
-            Sign Up
-          </button>
+          <button         
+              type="submit"         
+              className="w-full py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition duration-200 shadow-md flex items-center justify-center"         
+             disabled={isLoading}       
+           >         
+           {isLoading && (          
+           <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>          
+            )}         
+         {isLoading ? 'Logging in...' : 'Login'}       
+         </button>
           <div className="text-center mt-4">
             <span className="text-gray-400">Already have an account?</span>
             <a href="/" className="ml-2 text-green-400 hover:underline font-semibold">Login</a>

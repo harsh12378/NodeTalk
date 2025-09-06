@@ -119,31 +119,32 @@ export default function Header() {
           <nav>
             <ul className="space-y-4">
               <li>
-                <a
-                  href="/allUsers"
-                  onClick={() => setIsSidebarOpen(false)}
+                <button
+                 
+                  onClick={() => {navigate('/allUsers');
+                   setIsSidebarOpen(false);}}
                   className="block hover:text-green-500 transition-transform duration-200 hover:translate-x-1"
                 >
                   All Users
-                </a>
+                </button>
               </li>
               <li>
-                <a
-                  href="/friends"
-                  onClick={() => setIsSidebarOpen(false)}
+                <button
+                  onClick={() => {navigate('/friends');
+                   setIsSidebarOpen(false);}}
                   className="block hover:text-green-500 transition-transform duration-200 hover:translate-x-1"
                 >
                   Friends
-                </a>
+                </button>
               </li>
                <li>
-                <a
-                  href="/pendingrequests"
-                  onClick={() => setIsSidebarOpen(false)}
+                <button
+                 onClick={() => {navigate('/pendingrequests');
+                   setIsSidebarOpen(false);}}
                   className="block hover:text-green-400 transition-transform duration-200 hover:translate-x-1"
                 >
                   Requests
-                </a>
+                </button>
               </li>
               <li>
                 <button
