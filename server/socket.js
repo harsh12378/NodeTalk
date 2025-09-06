@@ -1,9 +1,11 @@
-const onlineUsers =new Map();
+
 function setupSocket(io) {
+  const onlineUsers =new Map();
   io.on("connection", (socket) => {
     socket.on("join", (userId) => {
       socket.userId = userId;
       socket.join(userId);
+      onlineUsers.set(userId, socket.id);
       io.emit("userOnline",{userId});
     });
 

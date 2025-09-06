@@ -23,7 +23,8 @@ export default function ChattingBox({ receiver = {} }) {
   () => receiver || {},
   [receiver]
 );
-    useEffect(()=>{
+    useEffect(()=>{ 
+      if (!currentReceiver?._id) return;
       const fetchMessages=async()=>{
         try{
           
@@ -34,6 +35,9 @@ export default function ChattingBox({ receiver = {} }) {
          "Authorization": `Bearer ${token}`
     
       }});
+      socket.on("connect_error", (err) => {
+      console.error("Socket.IO connect_error:", err.message);
+      });
    
          if(!response.ok){
         throw new Error('Failed to get messages');
@@ -56,6 +60,7 @@ export default function ChattingBox({ receiver = {} }) {
     },[receiver]);
 
     useEffect(()=>{
+      
       const token = localStorage.getItem("token");
       const myId = token ? JSON.parse(atob(token.split(".")[1])).userId : null;
       socket.on("receiveMessage",(data)=>{

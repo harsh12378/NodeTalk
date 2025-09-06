@@ -21,6 +21,7 @@ app.use(cors({
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.log("cors error");
       callback(new Error("Not allowed by CORS"));
     }
   },
@@ -56,9 +57,11 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: function (origin, callback) {
+      console.log("Socket.IO origin:", origin); 
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
+        console.log("CORS blocked origin:", origin);
         callback(new Error("Not allowed by CORS"));
       }
     },
@@ -66,6 +69,7 @@ const io = new Server(server, {
     credentials: true,
   }
 });
+
 
 setupSocket(io);
 
