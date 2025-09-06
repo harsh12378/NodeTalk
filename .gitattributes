@@ -1,0 +1,27 @@
+# Handle line endings consistently across OS
+* text=auto eol=lf
+
+# Treat these as binary (no line ending normalization)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.gz binary
+*.exe binary
+*.dll binary
+
+# Language-specific overrides
+*.bat text eol=crlf      
+*.ps1 text eol=crlf      
+*.sh  text eol=lf        
+*.js  text eol=lf
+*.ts  text eol=lf
+*.jsx text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md  text eol=lf
+*.env text eol=lf
