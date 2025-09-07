@@ -8,6 +8,7 @@ import PendingRequests from "./pages/requests"
 import Friends from './pages/allFriends';
 import PrivateRoute from './components/privateRoute';
 import Settings from './pages/settings'
+import EntryPage from "./pages/entryPage"
 import {motion, AnimatePresence} from 'framer-motion';
 function ChattingBoxWrapper() {
   const location = useLocation();
@@ -37,7 +38,8 @@ function AppContent() {
         transition={{ duration: 0.6, ease: "easeOut" }}
       >
       <Routes location={location}>
-        <Route path="/" element={<Login />} />
+        <Route path="/" element={<EntryPage />} />
+        <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
        
           <Route path="/chat/:id" element={

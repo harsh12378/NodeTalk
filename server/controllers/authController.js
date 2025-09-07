@@ -198,6 +198,7 @@ exports.googleAuth=async(req,res)=>{
         lastSeen: Date.now()
       })
       await user.save();
+      console.log(user);
     }
     const authToken=generateToken(user._id);
    return res.json({

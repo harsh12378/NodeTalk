@@ -44,7 +44,6 @@ export default function ChattingBox({ receiver = {} }) {
           }
           const data=await response.json();          
           const myId = JSON.parse(atob(token.split(".")[1])).userId;
-          console.log("hello",data);
           const formatted=data.messages.map(msg=>({
             from: msg.senderId===myId?"you":"them",
             text:msg.text,

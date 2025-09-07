@@ -4,6 +4,7 @@ import dp from '../assets/dp.jpg'
 import API_BASE_URL from "../config";
 export default function Requests({request, onUpdate}){
 const [loading, setLoading]=useState(false);
+console.log(request);
 const acceptRequest=async(friendId,id)=>{
 const token=localStorage.getItem('token');
 setLoading(true);
