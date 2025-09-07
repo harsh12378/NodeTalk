@@ -174,7 +174,7 @@ export default function ChattingBox({ receiver = {} }) {
 
 
 return (
-  <div className="flex flex-col h-screen w-full bg-gray-900 text-green-100 relative overflow-hidden">
+  <div className="flex flex-col h-dvh w-full bg-gray-900 text-green-100 relative overflow-hidden">
     {/* Floating Header with receiver info */}
     <div className="fixed top-0 left-0 right-0 z-10 flex items-center gap-4 p-4 border-b border-green-700 bg-gray-900/90 backdrop-blur-md">
       <div className="relative">
