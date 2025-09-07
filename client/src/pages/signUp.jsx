@@ -49,10 +49,11 @@ export default function Register() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ access_token: tokenResponse.access_token }),
     });
-
+     setIsLoading(true);
     const data = await response.json();
     if(response.ok){
     localStorage.setItem("token",data.token);
+    setIsLoading(false);
       navigate("/allusers");
     }else{
       alert("some server error");

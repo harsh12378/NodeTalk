@@ -4,10 +4,11 @@
 
 body, #root {
 	background-color: #1f2937; /* Tailwind's bg-gray-800 */
-	min-height: 100vh;
+	height: 100dvh;
 	width: 100%;
 	margin: 0;
 	padding: 0;
+	overflow: hidden;
 }
 
 
