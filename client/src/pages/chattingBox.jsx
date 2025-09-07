@@ -199,9 +199,7 @@ return (
       </div>
     </div>
 
-    {/* Messages area with full gradient background */}
     <div className="flex-1 relative min-h-1 height: calc(100vh - 160px)">
-      {/* Gradient background layer */}
       <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-emerald-900/30 to-gray-800"></div>
       
       {/* Messages content */}
