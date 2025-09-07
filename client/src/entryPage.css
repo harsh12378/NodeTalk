@@ -74,7 +74,7 @@
   justify-content: center;
   margin: 0 auto 1.5rem;
   box-shadow: 0 10px 30px rgba(21, 128, 61, 0.25);
-  animation: pulse 2s ease-in-out infinite;
+  animation: entry-pulse 2s ease-in-out infinite;
 }
 
 .logo svg {
@@ -83,7 +83,7 @@
   fill: white;
 }
 
-@keyframes pulse {
+@keyframes entry-pulse {
   0%, 100% {
     transform: scale(1);
     box-shadow: 0 10px 30px rgba(21, 128, 61, 0.25);
