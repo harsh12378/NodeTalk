@@ -99,7 +99,7 @@ const getColorForLetter = (letter) => {
 return (
   <article
     onClick={handleCardClick}
-    className="flex items-center justify-between p-1 w-full bg-gray-800 rounded-none shadow-none border-b border-gray-700 transition-all duration-300 ease-in-out hover:shadow-green-500/20 hover:border-green-500/40 cursor-pointer"
+    className="flex items-center justify-between p-2 w-full bg-gray-800 rounded-none shadow-none border-b border-gray-700 transition-all duration-300 ease-in-out hover:shadow-green-500/20 hover:border-green-500/40 cursor-pointer"
     style={{margin: 0, maxWidth: '100vw', boxSizing: 'border-box', minHeight: '80px'}}
   >
     {/* Profile Picture with Status Border */}
@@ -107,7 +107,7 @@ return (
       {user.avatar ? (
         <img
           className={`
-            w-14 h-14 rounded-full object-cover 
+            w-15 h-16 rounded-full object-cover 
             border-4 ${isOnline ? 'border-green-500' : 'border-gray-600'}
           `}
           src={user.avatar}
@@ -122,7 +122,7 @@ return (
       <div
         className={`
           ${user.avatar ? 'hidden' : 'flex'}
-          w-14 h-14 rounded-full items-center justify-center
+          w-16 h-16 rounded-full items-center justify-center
           border-4 ${isOnline ? 'border-green-500' : 'border-gray-600'}
           ${getColorForLetter(user.name?.charAt(0) || 'U')}
           text-white font-semibold text-xl
@@ -133,7 +133,7 @@ return (
     </div>
      
     {/* User Info */}
-    <div className="flex flex-col justify-center flex-1 min-h-0 py-2">
+    <div className="flex flex-col justify-center flex-1 min-h-0 py-1">
       <h4 className="text-xl font-bold text-gray-50 tracking-wide">
         {user.name}
       </h4>
