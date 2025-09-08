@@ -39,11 +39,10 @@ useEffect(()=>{
 
 
 return(
-    <div className="flex flex-col w-full m-0 p-0 px-0 bg-gray-900 min-h-[calc(100vh-164px)] " style={{boxSizing: 'border-box'}}>
-        { users.map((user)=>(
-               <User key={user._id} user={user}/>
-            ))
-        }
+    <div className="flex flex-col w-full flex-1 h-full m-0 p-0 px-0 bg-gray-900 overflow-y-auto" style={{boxSizing: 'border-box'}}>
+      {users.map((user) => (
+        <User key={user._id} user={user}/>
+      ))}
     </div>
 )
 }

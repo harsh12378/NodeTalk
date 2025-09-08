@@ -99,46 +99,46 @@ const getColorForLetter = (letter) => {
 return (
   <article
     onClick={handleCardClick}
-    className="flex items-center justify-between p-2 w-full bg-gray-800 rounded-none shadow-none border-b border-gray-700 transition-all duration-300 ease-in-out hover:shadow-green-500/20 hover:border-green-500/40 cursor-pointer"
-    style={{margin: 0, maxWidth: '100vw', boxSizing: 'border-box'}}
+    className="flex items-center justify-between p-1 w-full bg-gray-800 rounded-none shadow-none border-b border-gray-700 transition-all duration-300 ease-in-out hover:shadow-green-500/20 hover:border-green-500/40 cursor-pointer"
+    style={{margin: 0, maxWidth: '100vw', boxSizing: 'border-box', minHeight: '80px'}}
   >
     {/* Profile Picture with Status Border */}
-        <div className="relative flex-shrink-0 mr-4">
-  {user.avatar ? (
-    <img
-      className={`
-        w-16 h-16 rounded-full object-cover 
-        border-4 ${isOnline ? 'border-green-500' : 'border-gray-600'}
-      `}
-      src={user.avatar}
-      alt={`${user.name}'s profile picture`}
-      onError={(e) => {
-        e.target.style.display = 'none';
-        e.target.nextElementSibling.style.display = 'flex';
-      }}
-    />
-  ) : null}
-  
-    <div
-    className={`
-      ${user.avatar ? 'hidden' : 'flex'}
-      w-16 h-16 rounded-full items-center justify-center
-      border-4 ${isOnline ? 'border-green-500' : 'border-gray-600'}
-      ${getColorForLetter(user.name?.charAt(0) || 'U')}
-      text-white font-semibold text-xl
-    `}
-  >
-    {user.name?.charAt(0).toUpperCase() || 'U'}
-  </div>
-   </div>
-
+    <div className="relative flex-shrink-0 mr-4">
+      {user.avatar ? (
+        <img
+          className={`
+            w-14 h-14 rounded-full object-cover 
+            border-4 ${isOnline ? 'border-green-500' : 'border-gray-600'}
+          `}
+          src={user.avatar}
+          alt={`${user.name}'s profile picture`}
+          onError={(e) => {
+            e.target.style.display = 'none';
+            e.target.nextElementSibling.style.display = 'flex';
+          }}
+        />
+      ) : null}
+       
+      <div
+        className={`
+          ${user.avatar ? 'hidden' : 'flex'}
+          w-14 h-14 rounded-full items-center justify-center
+          border-4 ${isOnline ? 'border-green-500' : 'border-gray-600'}
+          ${getColorForLetter(user.name?.charAt(0) || 'U')}
+          text-white font-semibold text-xl
+        `}
+      >
+        {user.name?.charAt(0).toUpperCase() || 'U'}
+      </div>
+    </div>
+     
     {/* User Info */}
-    <div className="flex flex-col justify-center flex-1">
+    <div className="flex flex-col justify-center flex-1 min-h-0 py-2">
       <h4 className="text-xl font-bold text-gray-50 tracking-wide">
         {user.name}
       </h4>
-      
-      <div className="text-sm mt-1">
+             
+      <div className="text-sm mt-2">
         {isOnline ? (
           <span className="flex items-center space-x-1.5 font-semibold text-green-400">
             <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
@@ -151,12 +151,12 @@ return (
         )}
       </div>
     </div>
-
+     
     {/* Action Buttons */}
     <div className="flex items-center justify-center p-2">
       {friendshipStatus === "none" && (
         <button
-          className="px-3 py-1 text-white text-sm font-medium rounded-lg transition-all duration-200 flex items-center gap-1 bg-green-600 hover:bg-green-700 hover:scale-105 active:scale-95"
+          className="px-3 py-2 text-white text-sm font-medium rounded-lg transition-all duration-200 flex items-center gap-1 bg-green-600 hover:bg-green-700 hover:scale-105 active:scale-95"
           onClick={handleAddFriend}
         >
           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -169,7 +169,7 @@ return (
           Add
         </button>
       )}
-
+       
       {friendshipStatus === "pending" && (
         <button
           className="px-3 py-1 text-white text-sm font-medium rounded-lg bg-gray-500 cursor-not-allowed flex items-center gap-1"
@@ -178,10 +178,10 @@ return (
           pending
         </button>
       )}
-
+       
       {friendshipStatus === "rejected" && (
         <button
-          className="px-3 py-1 text-white text-sm font-medium rounded-lg bg-gray-500 cursor-not-allowed flex items-center gap-1"
+          className="px-3 py-2 text-white text-sm font-medium rounded-lg bg-gray-500 cursor-not-allowed flex items-center gap-1"
           disabled
         >
           rejected

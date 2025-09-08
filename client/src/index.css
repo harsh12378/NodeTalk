@@ -2,13 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+
 body, #root {
 	background-color: #1f2937; /* Tailwind's bg-gray-800 */
-	height: 100dvh;
+	min-height: 100dvh;
 	width: 100%;
 	margin: 0;
 	padding: 0;
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
 }
 
 

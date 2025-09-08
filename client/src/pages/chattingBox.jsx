@@ -174,9 +174,9 @@ export default function ChattingBox({ receiver = {} }) {
 
 
 return (
-  <div className="flex flex-col h-dvh w-full bg-gray-900 text-green-100 relative overflow-hidden">
+  <div className="flex flex-col h-dvh w-full bg-gray-900 text-green-100 relative overflow-hidden ">
     {/* Floating Header with receiver info */}
-    <div className="fixed top-0 left-0 right-0 z-10 flex items-center gap-4 p-4 border-b border-green-700 bg-gray-900/90 backdrop-blur-md">
+    <div className=" flex items-center gap-4 p-4 border-b border-green-700 bg-gray-900/90 backdrop-blur-md flex-shrink-0 z-10">
       <div className="relative">
         <img
           src={currentReceiver.avatar || dp}
@@ -199,11 +199,11 @@ return (
       </div>
     </div>
 
-    <div className="flex-1 relative min-h-1 height: calc(100vh - 160px)">
+    <div className="flex-1 relative min-h-1 ">
       <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-emerald-900/30 to-gray-800"></div>
       
       {/* Messages content */}
-      <div className="relative z-[1] h-full overflow-y-auto p-4 space-y-3 pt-24 pb-24" style={{overflowX: 'hidden'}}>
+      <div className="relative z-[1] h-full overflow-y-auto p-4 space-y-3" style={{overflowX: 'hidden'}}>
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
             <div className="text-center">
@@ -289,7 +289,7 @@ return (
   
 
     {/* Floating Input area */}
-    <div className="fixed bottom-0 left-0 right-0 z-10 flex items-end gap-3 p-4 border-t border-green-700 bg-gray-900/90 backdrop-blur-md">
+    <div className=" z-10 flex items-end gap-3 p-4 border-t border-green-700 bg-gray-900/90 backdrop-blur-md flex-shrink-0">
       <div className="flex-1 relative">
         <textarea
           className="w-full p-3 pr-12 rounded-full bg-gray-800 text-white text-base font-bold focus:outline-none focus:ring-2 focus:ring-green-500 resize-none max-h-32 min-h-[44px] placeholder-gray-500 capitalize"

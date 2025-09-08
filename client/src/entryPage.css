@@ -1,12 +1,41 @@
+/* Global CSS file - Updated */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body, #root {
+	background-color: #1f2937;
+	min-height: 100dvh; /* Allow growth beyond viewport */
+	width: 100%;
+	margin: 0;
+	padding: 0;
+	overflow-x: hidden; /* Only prevent horizontal scroll */
+	/* overflow-y: auto; - Let vertical scroll happen naturally */
+}
+
+/* Entry page CSS - Updated */
 .entry-page {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background: linear-gradient(135deg, #0a0a0a 0%, #111111 50%, #0a1a0f 100%);
-  min-height: 100vh;
+  min-height: 100vh; /* Allow growth beyond viewport */
   overflow-x: hidden;
   color: white;
   position: relative;
 }
 
+.container {
+  position: relative;
+  z-index: 10;
+  min-height: auto; /* Changed from 100vh to auto */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+  text-align: center;
+}
+
+/* Rest of your CSS remains the same... */
 .bubbles {
   position: fixed;
   top: 0;
@@ -45,18 +74,6 @@
     transform: translateY(-100vh) rotate(360deg);
     opacity: 0;
   }
-}
-
-.container {
-  position: relative;
-  z-index: 10;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  padding: 2rem;
-  text-align: center;
 }
 
 .logo-section {

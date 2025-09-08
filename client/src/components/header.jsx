@@ -29,7 +29,7 @@ export default function Header() {
 
 
   return (
-  <div className=" w-full bg-gray-800 p-0 m-0 border-b-2 border-green-700">
+  <div className="w-full bg-gray-800 p-0 m-0 border-b-2 border-green-700 h-auto min-h-[80px]">
       {/* Header */}
   <div className="w-full bg-gray-900 text-green-500 px-4 py-2 shadow-xl m-0">
   <div className="flex items-center justify-between w-full px-2 py-2 rounded shadow-md bg-gray-900">
