@@ -2,7 +2,7 @@
 
 Nodetalk is a real-time chat application built with Node.js, enabling seamless communication between users. It comes with core social and messaging features such as friend management, live status updates, and instant messaging powered by WebSockets.
 
-✨ Features
+## Features
 
  Real-time Messaging – Send and receive messages instantly.
 
@@ -16,18 +16,16 @@ Nodetalk is a real-time chat application built with Node.js, enabling seamless c
 
 🛠 Tech Stack
 
-##Frontend
+## Frontend
 
 React
 
 Tailwind CSS / Bootstrap for styling
 
-Backend
+## Backend
 
 Node.js
-
 Express.js
-
 Socket.IO (for real-time messaging)
 
 ## Database
@@ -44,7 +42,7 @@ Bcrypt for password hashing
 git clone https://github.com/yourusername/nodetalk.git
 cd nodetalk
 
-#install dependencies
+# install dependencies
 npm install
 
 # dotenv (backend)
@@ -54,9 +52,11 @@ JWT_SECRET=your_secret_key
 
 # run command (for both client and server)
 npm run dev
-
-
-
 Nodemon (dev server)
-
 dotenv (environment configuration)
+
+## run in docker(for backend)
+setup dotenv with all required variables
+Build image -> docker build -t nodetalk-server .
+Run the container -> docker run -d -p 5000:5000 --env-file .env --name nodetalk-container nodetalk-server
+
