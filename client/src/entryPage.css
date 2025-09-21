@@ -31,7 +31,8 @@ body, #root {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  padding: 7rem;
+  padding: 2rem;
+  padding-top: 7rem;
   text-align: center;
 }
 
