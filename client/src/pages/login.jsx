@@ -21,10 +21,12 @@ export default function Login() {
 
     const data = await response.json();
     if(response.status===404){
+      setIsLoading(false);
       alert(" user not found");
 
     }
     else if(response.status===401){
+      setIsLoading(false);
       alert("Invalid credentials");
     }
     else{ 
@@ -35,6 +37,7 @@ export default function Login() {
     }
 
   } catch (error) {
+      setIsLoading(false);
     alert("some server error");
     console.error("Error logging in:", error);
   }
@@ -53,6 +56,7 @@ export default function Login() {
       localStorage.setItem("token",data.token);
         navigate("/allusers");
       }else{
+        setIsLoading(false);
         alert("some server error");
       }
     },
