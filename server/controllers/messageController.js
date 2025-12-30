@@ -5,7 +5,6 @@ const Message =require('../models/message');
 const user = require('../models/user');
 
 exports.sendMessage=async(req,res)=>{
-   
     try{
           
         const senderId=req.user.userId;
