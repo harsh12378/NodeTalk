@@ -43,16 +43,6 @@ async function connectDB() {
 }
 connectDB();
 
-
-const authRoutes = require('./routes/authRoutes');
-const usersRoutes = require('./routes/usersRoutes');
-const messageRoutes = require('./routes/messageRoutes');
-
-app.use('/api/auth', authRoutes);
-app.use('/api/users', verifyToken, usersRoutes);
-app.use('/api/messages', verifyToken, messageRoutes);
-
-
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -70,8 +60,22 @@ const io = new Server(server, {
   }
 });
 
-
 setupSocket(io);
+
+// Attach Socket.IO instance to request BEFORE defining routes
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
+const authRoutes = require('./routes/authRoutes');
+const usersRoutes = require('./routes/usersRoutes');
+const messageRoutes = require('./routes/messageRoutes');
+const chatRoutes = require('./routes/chatRoutes');
+app.use('/api/auth', authRoutes);
+app.use('/api/users', verifyToken, usersRoutes);
+app.use('/api/messages', verifyToken, messageRoutes);
+app.use('/api/chat', verifyToken, chatRoutes);
 
 const port = process.env.PORT||5000;
 server.listen(port, () => {
