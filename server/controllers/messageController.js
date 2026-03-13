@@ -62,7 +62,19 @@ exports.sendMessage = async (req, res) => {
       messageType,
       ...(media && { media })
     });
-   req.io.to(`chat:${chat._id}`).emit("newMessage", newMessage);
+    
+    // Populate senderId with user details before emitting
+    const populatedMessage = await newMessage.populate('senderId', 'name avatar');
+    const messageData = populatedMessage.toObject(); // Convert to plain object for Socket.IO
+    console.log(`📨 EMITTING newMessage to chat:${chat._id}`, { messageId: newMessage._id, content });
+    
+    // Emit to chat room (for users viewing this chat)
+    req.io.to(`chat:${chat._id}`).emit("newMessage", messageData);
+    
+    // Also emit to receiver's user room (for notifications even if not viewing this chat)
+    req.io.to(`user:${receiverId}`).emit("newMessage", messageData);
+    console.log(`📨 EMITTING to receiver room user:${receiverId}`);
+    
     // --- Update chat's lastMessage + bump updatedAt ---
     await Chat.findByIdAndUpdate(chat._id, {
       lastMessage: newMessage._id
@@ -88,7 +100,11 @@ exports.sendMessage = async (req, res) => {
           ...(media && { media })
         });
         await Chat.findByIdAndUpdate(chat._id, { lastMessage: newMessage._id });
-        req.io.to(`chat:${chat._id}`).emit("newMessage", newMessage);
+        
+        // Populate senderId with user details before emitting
+        const populatedMessage = await newMessage.populate('senderId', 'name avatar');
+        const messageData = populatedMessage.toObject(); // Convert to plain object for Socket.IO
+        req.io.to(`chat:${chat._id}`).emit("newMessage", messageData);
         return res.status(201).json({ success: true, data: newMessage });
       }
     }

@@ -20,6 +20,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useEffect } from "react";
 import { connectSocket } from "./socket";
 import { getCurrentUserFromToken } from "./utils/jwt";
+import useGlobalMessageListener from "./hooks/useGlobalMessageListener";
+import { ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+
 function ChattingBoxWrapper() {
   const location = useLocation();
   const receiver = location.state?.user;
@@ -111,6 +115,13 @@ function AppContent() {
   );
 }
 
+function AppWithGlobalListener() {
+  // Use global message listener on all pages
+  useGlobalMessageListener();
+
+  return <AppContent />;
+}
+
 export default function App() {
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -121,7 +132,19 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <AppContent />
+      <ToastContainer
+        position="top-center"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop={true}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="light"
+      />
+      <AppWithGlobalListener />
     </BrowserRouter>
   );
 }

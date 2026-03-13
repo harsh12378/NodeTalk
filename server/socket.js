@@ -1,3 +1,6 @@
+const jwt = require("jsonwebtoken");
+const Chat = require("./models/chat");
+
 function setupSocket(io) {
   const onlineUsers = new Map();
 

@@ -1,11 +1,20 @@
 import { useState, useMemo, useEffect, useRef, useLayoutEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { getSocket } from "../socket";
 import API_BASE_URL from "../config";
+import {
+  showUserOnlineToast,
+  showUserOfflineToast,
+  showConnectedToast,
+  showMessageSentToast,
+  showMessageErrorToast,
+} from "../components/CustomToast";
 
 // Default avatar placeholder
 const DEFAULT_AVATAR = "https://via.placeholder.com/48?text=User";
 
 export default function ChattingBox({ receiver, currentUser }) {
+  const navigate = useNavigate();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
   const [sending, setSending] = useState(false);
@@ -61,11 +70,18 @@ export default function ChattingBox({ receiver, currentUser }) {
     if (!chatId) return;
 
     const socket = getSocket();
-    if (!socket) return;
+    if (!socket) {
+      console.error("❌ Socket not available");
+      return;
+    }
 
+    console.log("🔗 Joining chat room:", chatId);
     socket.emit("joinChat", chatId);
+
+    showConnectedToast(currentReceiver.name);
+
     fetchMessages();
-  }, [chatId]);
+  }, [chatId, currentReceiver.name]);
 
   // ── Fetch messages (supports pagination) ───────────────────────
   const fetchMessages = async (cursor = null) => {
@@ -104,12 +120,31 @@ export default function ChattingBox({ receiver, currentUser }) {
     if (!chatId) return;
 
     const socket = getSocket();
-    if (!socket) return;
+    if (!socket) {
+      console.error("❌ Socket not available for listening");
+      return;
+    }
+
+    console.log("👂 Attaching newMessage listener for chatId:", chatId);
 
     const handleNewMessage = (message) => {
-      if (message.chatId !== chatId) return;
+      console.log("📨 Received newMessage:", message);
+
+      if (message.chatId !== chatId) {
+        console.log("⏭️  Message not for this chat, ignoring");
+        return;
+      }
 
       const isOwnMessage = message.senderId?._id === currentUser?._id;
+      console.log(
+        "📋 Processing message - isOwn:",
+        isOwnMessage,
+        "content:",
+        message.content,
+      );
+
+      // Global listener handles toast notifications
+      // This listener focuses on UI updates only
 
       setMessages((prev) => {
         if (isOwnMessage) {
@@ -118,21 +153,37 @@ export default function ChattingBox({ receiver, currentUser }) {
             (m) => m.pending && m.content === message.content,
           );
           if (hasPending) {
+            console.log("🔄 Replacing optimistic message with real one");
             return prev.map((m) =>
               m.pending && m.content === message.content
                 ? { ...message, pending: false }
                 : m,
             );
+          } else {
+            console.log("⚠️ No pending message found, appending new message");
+            return [...prev, message];
           }
         }
         // Append if it's from the other person
-        // or if no matching optimistic message found
+        console.log("➕ Appending message from other user");
         return [...prev, message];
       });
     };
 
+    // Handle reconnection - rejoin chat room
+    const handleReconnect = () => {
+      console.log("🔁 Socket reconnected, rejoining chat:", chatId);
+      socket.emit("joinChat", chatId);
+    };
+
     socket.on("newMessage", handleNewMessage);
-    return () => socket.off("newMessage", handleNewMessage);
+    socket.on("connect", handleReconnect);
+
+    return () => {
+      console.log("🧹 Removing newMessage listener for chatId:", chatId);
+      socket.off("newMessage", handleNewMessage);
+      socket.off("connect", handleReconnect);
+    };
   }, [chatId, currentUser?._id]);
 
   // ── Presence: online/offline ───────────────────────────────────
@@ -143,10 +194,17 @@ export default function ChattingBox({ receiver, currentUser }) {
     if (!socket) return;
 
     const handleOnline = ({ userId }) => {
-      if (userId === currentReceiver._id) setIsOnline(true);
+      if (userId === currentReceiver._id) {
+        setIsOnline(true);
+        showUserOnlineToast(currentReceiver.name);
+      }
     };
+
     const handleOffline = ({ userId }) => {
-      if (userId === currentReceiver._id) setIsOnline(false);
+      if (userId === currentReceiver._id) {
+        setIsOnline(false);
+        showUserOfflineToast(currentReceiver.name);
+      }
     };
 
     socket.on("userOnline", handleOnline);
@@ -156,7 +214,7 @@ export default function ChattingBox({ receiver, currentUser }) {
       socket.off("userOnline", handleOnline);
       socket.off("userOffline", handleOffline);
     };
-  }, [currentReceiver._id]);
+  }, [currentReceiver._id, currentReceiver.name]);
 
   // ── Send message ───────────────────────────────────────────────
   const sendMessage = async () => {
@@ -186,7 +244,10 @@ export default function ChattingBox({ receiver, currentUser }) {
 
     try {
       const token = localStorage.getItem("token");
-       console.log("Sending message to API:", { to: currentReceiver._id, content: messageText });
+      console.log("Sending message to API:", {
+        to: currentReceiver._id,
+        content: messageText,
+      });
       const response = await fetch(`${API_BASE_URL}/api/messages/send`, {
         method: "POST",
         headers: {
@@ -199,11 +260,11 @@ export default function ChattingBox({ receiver, currentUser }) {
         }),
       });
 
-      if (!response.ok) throw new Error("Failed to send message");
-
+      showMessageSentToast();
       // socket "newMessage" event will replace the optimistic message
     } catch (err) {
       console.error("Send message failed:", err);
+      showMessageErrorToast("Failed to send message");
       // Roll back optimistic message and restore input
       setMessages((prev) => prev.filter((m) => m._id !== tempId));
       setInput(messageText);
@@ -251,6 +312,28 @@ export default function ChattingBox({ receiver, currentUser }) {
     <div className="flex flex-col h-dvh w-full bg-gray-900 text-green-100 relative overflow-hidden ">
       {/* Floating Header with receiver info */}
       <div className=" flex items-center gap-4 p-4 border-b border-green-700 bg-gray-900/90 backdrop-blur-md flex-shrink-0 z-10">
+        {/* Back Button */}
+        <button
+          onClick={() => navigate(-1)}
+          className="flex-shrink-0 p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-green-400"
+          aria-label="Go back"
+          title="Go back"
+        >
+          <svg
+            className="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15 19l-7-7 7-7"
+            />
+          </svg>
+        </button>
+
         <div className="relative">
           <img
             src={currentReceiver.avatar || DEFAULT_AVATAR}
