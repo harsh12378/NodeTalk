@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { getSocket } from "../socket";
 import { useNavigate } from "react-router-dom";
 import API_BASE_URL from "../config";
-export default function User({ user }) {
+export default function User({ user, currentUserId }) {
   const [friendshipStatus, setFriendshipStatus] = useState(
     user.friendshipStatus || "none",
   );
@@ -87,6 +87,42 @@ export default function User({ user }) {
           : undefined,
     });
   };
+
+  const formatLastMessageTime = (timestamp) => {
+    if (!timestamp) return "";
+    const now = new Date();
+    const messageDate = new Date(timestamp);
+    const diffInMs = now - messageDate;
+    const diffInMinutes = Math.floor(diffInMs / (1000 * 60));
+    const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
+    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+
+    if (diffInMinutes < 1) return "now";
+    if (diffInMinutes < 60) return `${diffInMinutes}m`;
+    if (diffInHours < 24) return `${diffInHours}h`;
+    if (diffInDays === 1) return "Yesterday";
+    if (diffInDays < 7) return `${diffInDays}d`;
+
+    return messageDate.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  const getLastMessagePreview = () => {
+    if (!user.lastMessage) return null;
+    const messageContent = user.lastMessage.content || "";
+    const isCurrentUserSender = user.lastMessage.senderId === currentUserId;
+    const truncatedContent =
+      messageContent.length > 40
+        ? messageContent.substring(0, 40) + "..."
+        : messageContent;
+
+    return {
+      text: isCurrentUserSender ? `You: ${truncatedContent}` : truncatedContent,
+      time: formatLastMessageTime(user.lastMessage.createdAt),
+    };
+  };
   const getColorForLetter = (letter) => {
     const colors = [
       "bg-red-600",
@@ -165,6 +201,15 @@ export default function User({ user }) {
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
               <span>Online</span>
             </span>
+          ) : getLastMessagePreview() ? (
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-gray-400 truncate flex-1">
+                {getLastMessagePreview().text}
+              </p>
+              <span className="text-xs text-gray-500 whitespace-nowrap">
+                {getLastMessagePreview().time}
+              </span>
+            </div>
           ) : (
             <p className="text-gray-400">
               {`Last seen: ${formatLastSeen ? formatLastSeen(user?.lastSeen) : "N/A"}`}

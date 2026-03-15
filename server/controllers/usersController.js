@@ -1,47 +1,109 @@
 const jwt=require('jsonwebtoken');
 const User=require('../models/user.js');
-
+const redisClient = require("../config/redis");
+const Chat = require('../models/chat');
 
 exports.getAllUsers = async (req, res) => {
-  
   try {
     const userId = req.user.userId;
-    const me = await User.findById(userId)
-    await User.findByIdAndUpdate(userId,{lastSeen:Date.now()});
+ 
+    // --- Try Redis cache first ---
+    const cacheKey = `inbox:${userId}`;
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      // Update lastSeen in background — don't block the cached response
+      User.findByIdAndUpdate(userId, { lastSeen: Date.now() }).catch(console.error);
+      return res.status(200).json(JSON.parse(cached));
+    }
+ 
+    // --- Fetch current user ---
+    const me = await User.findById(userId).lean();
     if (!me) {
       return res.status(404).json({ message: "User not found" });
     }
-    const users = await User.find({ _id: { $ne: userId } });
-
+ 
+    // --- Update lastSeen non-blocking ---
+    User.findByIdAndUpdate(userId, { lastSeen: Date.now() }).catch(console.error);
+ 
+    // --- Fetch all other users ---
+    const users = await User.find({ _id: { $ne: userId } })
+      .select("_id name avatar isOnline lastSeen")
+      .lean();
+ 
+    // --- Fetch all active chats this user is part of ---
+    // Populate lastMessage for inbox preview (WhatsApp-style)
+    const chats = await Chat.find({
+      "participants.user": userId,
+      "participants.deletedAt": null
+    })
+      .select("participants updatedAt lastMessage")
+      .populate("lastMessage", "content type senderId createdAt")
+      .lean();
+ 
+    // --- Build map: otherUserId -> { lastActivityAt, lastMessage } ---
+    const lastActivityMap = {};
+ 
+    for (const chat of chats) {
+      const otherParticipant = chat.participants.find(
+        (p) => p.user.toString() !== userId.toString()
+      );
+ 
+      if (!otherParticipant) continue;
+ 
+      const otherId = otherParticipant.user.toString();
+      const chatTime = chat.updatedAt || new Date(0);
+ 
+      // Keep only the most recent chat entry per user (edge case: multiple chats)
+      if (
+        !lastActivityMap[otherId] ||
+        chatTime > lastActivityMap[otherId].lastActivityAt
+      ) {
+        lastActivityMap[otherId] = {
+          lastActivityAt: chatTime,
+          lastMessage: chat.lastMessage || null
+        };
+      }
+    }
+ 
+    // --- Build final list ---
     const finalList = users.map((user) => {
-      const relation = me.friends.find(
+      const relation = me.friends?.find(
         (f) => f.friendId.toString() === user._id.toString()
       );
-
-      let friendshipStatus = "none"; // default
-      if (relation) {
-        friendshipStatus = relation.status; // "pending" or "accepted"
-      }
-
+ 
+      const activity = lastActivityMap[user._id.toString()];
+ 
       return {
         _id: user._id,
         name: user.name,
         avatar: user.avatar,
         isOnline: user.isOnline,
-        friendshipStatus,
         lastSeen: user.lastSeen,
+        friendshipStatus: relation?.status || "none",
+        lastMessageAt: activity?.lastActivityAt || null,
+        lastMessage: activity?.lastMessage || null
       };
     });
-
+ 
+    // --- Sort: recent chat activity first, then alphabetically ---
+    finalList.sort((a, b) => {
+      const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+      const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+ 
+      if (bTime !== aTime) return bTime - aTime;       // most recent first
+      return a.name.localeCompare(b.name);             // tie-break: A → Z
+    });
+ 
+    // --- Cache for 30 seconds ---
+    await redisClient.setEx(cacheKey, 30, JSON.stringify(finalList));
+ 
     return res.status(200).json(finalList);
+ 
   } catch (error) {
-    console.error(error);
-    return res
-      .status(500)
-      .json({ message: "Some server error in finding users" });
+    console.error("getAllUsers error:", error);
+    return res.status(500).json({ message: "Some server error in finding users" });
   }
 };
-
 
 exports.sendRequest=async(req,res)=>{
     

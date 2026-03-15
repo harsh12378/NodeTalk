@@ -6,7 +6,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const setupSocket = require("./socket");
 const { verifyToken } = require("./middleware/authMiddleware");
-
+const redisClient = require("./config/redis");
 dotenv.config();
 const app = express();
 

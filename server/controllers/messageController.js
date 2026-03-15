@@ -4,13 +4,17 @@ const User = require('../models/user');
 const Chat = require('../models/chat');
 const mongoose = require("mongoose");
 const { Message } = require("../models/message");
-
+const redisClient = require("../config/redis"); 
+const invalidateInboxCache = require("../utils/invalidateInbox");
+const invalidateMessageCache = require("../utils/invalidateMessages");
 
 exports.sendMessage = async (req, res) => {
-  try {
-    const senderId = req.user.userId;
-    const { to: receiverId, content, messageType = "text", media = null } = req.body;
 
+  // ✅ Destructure OUTSIDE try so the catch block can access these on duplicate key retry
+  const { to: receiverId, content, messageType = "text", media = null } = req.body;
+  const senderId = req.user.userId;
+
+  try {
     // --- Validation ---
     if (!receiverId || !content) {
       return res.status(400).json({ message: "receiverId and content are required" });
@@ -30,7 +34,7 @@ exports.sendMessage = async (req, res) => {
       return res.status(404).json({ message: "Receiver not found" });
     }
 
-    // --- Get or create the 1-1 chat (same logic as getOrCreateChat) ---
+    // --- Get or create the 1-1 chat ---
     const sorted = [senderId, receiverId].sort();
     const chatKey = `${sorted[0]}_${sorted[1]}`;
     const now = new Date();
@@ -62,50 +66,75 @@ exports.sendMessage = async (req, res) => {
       messageType,
       ...(media && { media })
     });
-    
-    // Populate senderId with user details before emitting
-    const populatedMessage = await newMessage.populate('senderId', 'name avatar');
-    const messageData = populatedMessage.toObject(); // Convert to plain object for Socket.IO
-    console.log(`📨 EMITTING newMessage to chat:${chat._id}`, { messageId: newMessage._id, content });
-    
-    // Emit to chat room (for users viewing this chat)
-    req.io.to(`chat:${chat._id}`).emit("newMessage", messageData);
-    
-    // Also emit to receiver's user room (for notifications even if not viewing this chat)
-    req.io.to(`user:${receiverId}`).emit("newMessage", messageData);
-    console.log(`📨 EMITTING to receiver room user:${receiverId}`);
-    
-    // --- Update chat's lastMessage + bump updatedAt ---
+
+    // ✅ Step 1: Update chat FIRST (bumps updatedAt for inbox ordering + sets preview)
     await Chat.findByIdAndUpdate(chat._id, {
       lastMessage: newMessage._id
     });
 
+    // ✅ Step 2: Invalidate caches AFTER chat is updated
+    // so any cache miss re-fetches fresh data with correct lastMessage
+    await invalidateMessageCache(chat._id);
+    await invalidateInboxCache([senderId, receiverId]);
+
+    // ✅ Step 3: Populate AFTER cache invalidation
+    const populatedMessage = await newMessage.populate("senderId", "name avatar");
+    const messageData = populatedMessage.toObject();
+
+    // ✅ Step 4: Emit socket events LAST (receivers may immediately query the DB)
+    console.log(`📨 EMITTING newMessage to chat:${chat._id}`, {
+      messageId: newMessage._id,
+      content
+    });
+    req.io.to(`chat:${chat._id}`).emit("newMessage", messageData);
+    req.io.to(`user:${receiverId}`).emit("newMessage", messageData);
+    console.log(`📨 EMITTING to receiver room user:${receiverId}`);
+
+    // ✅ Step 5: Return populated message
     return res.status(201).json({
       success: true,
       message: "Message sent successfully",
-      data: newMessage
+      data: messageData
     });
 
   } catch (error) {
-    // Race condition on chat upsert — retry the find
+    // --- Race condition on chat upsert: another request created the chat simultaneously ---
     if (error.code === 11000) {
-      const sorted = [req.user.userId, receiverId].sort();
-      const chat = await Chat.findOne({ chatKey: `${sorted[0]}_${sorted[1]}` });
-      if (chat) {
+      try {
+        const sorted = [senderId, receiverId].sort();
+        const chat = await Chat.findOne({ chatKey: `${sorted[0]}_${sorted[1]}` });
+
+        if (!chat) {
+          return res.status(500).json({ message: "Failed to resolve chat after conflict" });
+        }
+
         const newMessage = await Message.create({
           chatId: chat._id,
-          senderId: req.user.userId,
-          content: content,
-          messageType: messageType || "text",
+          senderId,
+          content,
+          messageType,
           ...(media && { media })
         });
+
         await Chat.findByIdAndUpdate(chat._id, { lastMessage: newMessage._id });
-        
-        // Populate senderId with user details before emitting
-        const populatedMessage = await newMessage.populate('senderId', 'name avatar');
-        const messageData = populatedMessage.toObject(); // Convert to plain object for Socket.IO
+        await invalidateMessageCache(chat._id);
+        await invalidateInboxCache([senderId, receiverId]);
+
+        const populatedMessage = await newMessage.populate("senderId", "name avatar");
+        const messageData = populatedMessage.toObject();
+
         req.io.to(`chat:${chat._id}`).emit("newMessage", messageData);
-        return res.status(201).json({ success: true, data: newMessage });
+        req.io.to(`user:${receiverId}`).emit("newMessage", messageData);
+
+        return res.status(201).json({
+          success: true,
+          message: "Message sent successfully",
+          data: messageData
+        });
+
+      } catch (retryError) {
+        console.error("sendMessage retry error:", retryError);
+        return res.status(500).json({ message: "Internal server error" });
       }
     }
 
@@ -118,63 +147,74 @@ exports.getMessages = async (req, res) => {
   try {
     const userId = req.user.userId;
     const { chatId } = req.params;
-
+ 
     // --- Validation ---
     if (!mongoose.Types.ObjectId.isValid(chatId)) {
       return res.status(400).json({ message: "Invalid chatId" });
     }
-
-    // --- Cursor-based pagination params ---
+ 
     const limit = Math.min(parseInt(req.query.limit) || 30, 100);
-    const before = req.query.before; // message _id cursor (load older messages)
-
+    const before = req.query.before;
+ 
+    if (before && !mongoose.Types.ObjectId.isValid(before)) {
+      return res.status(400).json({ message: "Invalid cursor" });
+    }
+ 
+    // --- Redis cache key (scoped per user + page) ---
+    const cacheKey = `messages:${chatId}:${userId}:${before || "start"}:${limit}`;
+ 
+    // --- Try cache first ---
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return res.status(200).json(JSON.parse(cached));
+    }
+ 
     // --- Verify chat exists and user is a participant ---
     const chat = await Chat.findOne({
       _id: chatId,
       "participants.user": userId,
       "participants.deletedAt": null
     }).select("_id");
-
+ 
     if (!chat) {
       return res.status(404).json({ message: "Chat not found" });
     }
-
+ 
     // --- Build query ---
     const query = {
       chatId,
       deletedFor: { $nin: [userId] }
     };
-
-    // If cursor provided, fetch messages older than that message
+ 
     if (before) {
-      if (!mongoose.Types.ObjectId.isValid(before)) {
-        return res.status(400).json({ message: "Invalid cursor" });
-      }
       query._id = { $lt: new mongoose.Types.ObjectId(before) };
     }
-
-    // --- Fetch messages ---
+ 
+    // --- Fetch from DB ---
     const messages = await Message.find(query)
-      .sort({ _id: -1 })           // newest first within the page
-      .limit(limit + 1)            // fetch one extra to determine hasMore
+      .sort({ _id: -1 })          // newest first within the page
+      .limit(limit + 1)           // fetch one extra to determine hasMore
       .populate("senderId", "name avatar")
       .lean();
-
+ 
     const hasMore = messages.length > limit;
-    if (hasMore) messages.pop();   // remove the extra doc
-
-    // Return in ascending order (oldest first) for chat UI rendering
-    messages.reverse();
-
-    return res.status(200).json({
+    if (hasMore) messages.pop();  // remove the extra doc
+    messages.reverse();           // return oldest → newest for chat UI
+ 
+    const responsePayload = {
       success: true,
       data: messages,
       pagination: {
         hasMore,
         nextCursor: hasMore ? messages[0]._id : null
       }
-    });
-
+    };
+ 
+    // --- Cache for 60 seconds ---
+    await redisClient.setEx(cacheKey, 60, JSON.stringify(responsePayload));
+ 
+    return res.status(200).json(responsePayload);
+ 
   } catch (error) {
     console.error("getMessages error:", error);
     return res.status(500).json({ message: "Internal server error" });
