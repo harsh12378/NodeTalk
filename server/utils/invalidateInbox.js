@@ -11,9 +11,9 @@ const redisClient = require("../config/redis");
 const invalidateInboxCache = async (userIds) => {
   try {
     const ids = Array.isArray(userIds) ? userIds : [userIds];
-    const keys = ids.map((id) => `inbox:${id}`);
+    const keys = ids.map((id) => `inbox:${String(id)}`);
     if (keys.length > 0) {
-      await redisClient.del(keys);
+      await redisClient.del(...keys);
     }
   } catch (err) {
     console.error("Inbox cache invalidation error:", err);

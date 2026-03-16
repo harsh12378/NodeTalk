@@ -2,6 +2,8 @@ const jwt=require('jsonwebtoken');
 const User=require('../models/user.js');
 const redisClient = require("../config/redis");
 const Chat = require('../models/chat');
+const mongoose = require("mongoose");
+const { Message } = require("../models/message");
 
 exports.getAllUsers = async (req, res) => {
   try {
@@ -11,66 +13,81 @@ exports.getAllUsers = async (req, res) => {
     const cacheKey = `inbox:${userId}`;
     const cached = await redisClient.get(cacheKey);
     if (cached) {
-      // Update lastSeen in background — don't block the cached response
       User.findByIdAndUpdate(userId, { lastSeen: Date.now() }).catch(console.error);
       return res.status(200).json(JSON.parse(cached));
     }
  
-    // --- Fetch current user ---
     const me = await User.findById(userId).lean();
     if (!me) {
       return res.status(404).json({ message: "User not found" });
     }
  
-    // --- Update lastSeen non-blocking ---
     User.findByIdAndUpdate(userId, { lastSeen: Date.now() }).catch(console.error);
  
-    // --- Fetch all other users ---
     const users = await User.find({ _id: { $ne: userId } })
       .select("_id name avatar isOnline lastSeen")
       .lean();
  
-    // --- Fetch all active chats this user is part of ---
-    // Populate lastMessage for inbox preview (WhatsApp-style)
+    // Fetch all active chats with populated lastMessage
     const chats = await Chat.find({
       "participants.user": userId,
       "participants.deletedAt": null
     })
       .select("participants updatedAt lastMessage")
-      .populate("lastMessage", "content type senderId createdAt")
+      .populate("lastMessage", "content messageType senderId createdAt")
       .lean();
  
-    // --- Build map: otherUserId -> { lastActivityAt, lastMessage } ---
+    // Build map: otherUserId -> { lastActivityAt, lastMessage, unreadCount, chatId }
+    // Run all countDocuments in parallel via Promise.all
     const lastActivityMap = {};
  
-    for (const chat of chats) {
-      const otherParticipant = chat.participants.find(
-        (p) => p.user.toString() !== userId.toString()
-      );
+    await Promise.all(
+      chats.map(async (chat) => {
+        const otherParticipant = chat.participants.find(
+          (p) => p.user.toString() !== userId.toString()
+        );
+        const meAsParticipant = chat.participants.find(
+          (p) => p.user.toString() === userId.toString()
+        );
  
-      if (!otherParticipant) continue;
+        if (!otherParticipant || !meAsParticipant) return;
  
-      const otherId = otherParticipant.user.toString();
-      const chatTime = chat.updatedAt || new Date(0);
+        const otherId = otherParticipant.user.toString();
+        const chatTime = chat.updatedAt || new Date(0);
  
-      // Keep only the most recent chat entry per user (edge case: multiple chats)
-      if (
-        !lastActivityMap[otherId] ||
-        chatTime > lastActivityMap[otherId].lastActivityAt
-      ) {
-        lastActivityMap[otherId] = {
-          lastActivityAt: chatTime,
-          lastMessage: chat.lastMessage || null
+        // Unread = messages NOT sent by me, NOT deleted for me, AFTER my lastReadAt
+        const unreadQuery = {
+          chatId: chat._id,
+          senderId: { $ne: new mongoose.Types.ObjectId(userId) },
+          deletedFor: { $nin: [userId] }
         };
-      }
-    }
  
-    // --- Build final list ---
+        // If lastReadAt is null, user has never read → all messages are unread
+        if (meAsParticipant.lastReadAt) {
+          unreadQuery.createdAt = { $gt: meAsParticipant.lastReadAt };
+        }
+ 
+        const unreadCount = await Message.countDocuments(unreadQuery);
+ 
+        if (
+          !lastActivityMap[otherId] ||
+          chatTime > lastActivityMap[otherId].lastActivityAt
+        ) {
+          lastActivityMap[otherId] = {
+            lastActivityAt: chatTime,
+            lastMessage: chat.lastMessage || null,
+            unreadCount,
+            chatId: chat._id
+          };
+        }
+      })
+    );
+ 
+    // Build final list
     const finalList = users.map((user) => {
       const relation = me.friends?.find(
         (f) => f.friendId.toString() === user._id.toString()
       );
- 
       const activity = lastActivityMap[user._id.toString()];
  
       return {
@@ -81,20 +98,20 @@ exports.getAllUsers = async (req, res) => {
         lastSeen: user.lastSeen,
         friendshipStatus: relation?.status || "none",
         lastMessageAt: activity?.lastActivityAt || null,
-        lastMessage: activity?.lastMessage || null
+        lastMessage: activity?.lastMessage || null,
+        unreadCount: activity?.unreadCount || 0,
+        chatId: activity?.chatId || null
       };
     });
  
-    // --- Sort: recent chat activity first, then alphabetically ---
+    // Sort: most recent activity first, then alphabetically
     finalList.sort((a, b) => {
       const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
       const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
- 
-      if (bTime !== aTime) return bTime - aTime;       // most recent first
-      return a.name.localeCompare(b.name);             // tie-break: A → Z
+      if (bTime !== aTime) return bTime - aTime;
+      return a.name.localeCompare(b.name);
     });
  
-    // --- Cache for 30 seconds ---
     await redisClient.setEx(cacheKey, 30, JSON.stringify(finalList));
  
     return res.status(200).json(finalList);

@@ -80,8 +80,53 @@ export default function ChattingBox({ receiver, currentUser }) {
 
     showConnectedToast(currentReceiver.name);
 
+    // Mark chat as read when opening it (await completion)
+    markChatAsRead(chatId)
+      .then(() => {
+        console.log("✅ Successfully marked chat as read");
+      })
+      .catch((error) => {
+        console.error("❌ Failed to mark chat as read:", error);
+      });
+
     fetchMessages();
   }, [chatId, currentReceiver.name]);
+
+  // ── Mark chat as read ───────────────────────────────────────────
+  const markChatAsRead = async (chatIdToMark) => {
+    try {
+      const token = localStorage.getItem("token");
+      console.log(`📞 Calling mark read API for chat: ${chatIdToMark}`);
+
+      const response = await fetch(
+        `${API_BASE_URL}/api/chat/${chatIdToMark}/read`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      console.log(`📊 Mark read API response status: ${response.status}`);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`✅ Chat ${chatIdToMark} marked as read`, data);
+        return true;
+      } else {
+        const error = await response.text();
+        console.error(
+          `❌ Failed to mark chat as read. Status: ${response.status}, Error: ${error}`,
+        );
+        return false;
+      }
+    } catch (err) {
+      console.error("❌ Error marking chat as read:", err);
+      return false;
+    }
+  };
 
   // ── Fetch messages (supports pagination) ───────────────────────
   const fetchMessages = async (cursor = null) => {
@@ -143,6 +188,11 @@ export default function ChattingBox({ receiver, currentUser }) {
         message.content,
       );
 
+      // If message is from other user, mark as read
+      if (!isOwnMessage) {
+        markChatAsRead(chatId);
+      }
+
       // Global listener handles toast notifications
       // This listener focuses on UI updates only
 
@@ -187,6 +237,27 @@ export default function ChattingBox({ receiver, currentUser }) {
   }, [chatId, currentUser?._id]);
 
   // ── Presence: online/offline ───────────────────────────────────
+  // Check initial online status on mount
+  useEffect(() => {
+    if (!currentReceiver._id) return;
+
+    const socket = getSocket();
+    if (!socket) return;
+
+    socket.emit(
+      "checkOnline",
+      { targetUserId: currentReceiver._id },
+      (response) => {
+        console.log(
+          `✅ checkOnline for ${currentReceiver.name}:`,
+          response.isOnline,
+        );
+        setIsOnline(response.isOnline);
+      },
+    );
+  }, [currentReceiver._id, currentReceiver.name]);
+
+  // Listen for online/offline updates
   useEffect(() => {
     if (!currentReceiver._id) return;
 
@@ -195,6 +266,7 @@ export default function ChattingBox({ receiver, currentUser }) {
 
     const handleOnline = ({ userId }) => {
       if (userId === currentReceiver._id) {
+        console.log(`🟢 ${currentReceiver.name} came online`);
         setIsOnline(true);
         showUserOnlineToast(currentReceiver.name);
       }
@@ -202,6 +274,7 @@ export default function ChattingBox({ receiver, currentUser }) {
 
     const handleOffline = ({ userId }) => {
       if (userId === currentReceiver._id) {
+        console.log(`🔴 ${currentReceiver.name} went offline`);
         setIsOnline(false);
         showUserOfflineToast(currentReceiver.name);
       }

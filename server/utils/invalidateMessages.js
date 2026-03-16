@@ -19,7 +19,7 @@ const invalidateMessageCache = async (chatId) => {
       });
 
       if (keys.length > 0) {
-        await redisClient.del(keys);
+        await redisClient.del(...keys);
       }
 
       cursor = nextCursor;

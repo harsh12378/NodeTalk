@@ -1,34 +1,66 @@
 import { Link } from "react-router-dom";
 import dp from "../assets/dp.jpg";
 import { useState, useEffect } from "react";
-import { getSocket } from "../socket";
+import { getSocket, subscribeToUnreadUpdates } from "../socket";
 import { useNavigate } from "react-router-dom";
 import API_BASE_URL from "../config";
-export default function User({ user, currentUserId }) {
+export default function User({ user, currentUserId, unreadCount = 0 }) {
   const [friendshipStatus, setFriendshipStatus] = useState(
     user.friendshipStatus || "none",
   );
   const [isOnline, setIsOnline] = useState(user.isOnline);
+  const [unread, setUnread] = useState(unreadCount);
+
+  // Check initial online status on mount
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
 
-    socket.on("userOnline", ({ userId }) => {
+    socket.emit("checkOnline", { targetUserId: user._id }, (response) => {
+      console.log(`✅ checkOnline for ${user.name}:`, response.isOnline);
+      setIsOnline(response.isOnline);
+    });
+  }, [user._id, user.name]);
+
+  // Listen for online/offline updates
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleOnline = ({ userId }) => {
       if (userId === user._id) {
+        console.log(`🟢 ${user.name} came online`);
         setIsOnline(true);
       }
-    });
-    socket.on("userOffline", ({ userId }) => {
+    };
+
+    const handleOffline = ({ userId }) => {
       if (userId === user._id) {
+        console.log(`🔴 ${user.name} went offline`);
         setIsOnline(false);
+      }
+    };
+
+    socket.on("userOnline", handleOnline);
+    socket.on("userOffline", handleOffline);
+
+    return () => {
+      socket.off("userOnline", handleOnline);
+      socket.off("userOffline", handleOffline);
+    };
+  }, [user._id, user.name]);
+
+  // Listen for unread count updates
+  useEffect(() => {
+    const unsubscribe = subscribeToUnreadUpdates(({ chatId, unreadCount }) => {
+      if (chatId === user.chatId) {
+        console.log(`📬 Unread count updated for ${user.name}:`, unreadCount);
+        setUnread(unreadCount);
       }
     });
 
-    return () => {
-      socket.off("userOnline");
-      socket.off("userOffline");
-    };
-  }, [user._id]);
+    return unsubscribe;
+  }, [user.chatId, user.name]);
 
   const addFriend = async (id) => {
     const token = localStorage.getItem("token");
@@ -151,7 +183,11 @@ export default function User({ user, currentUserId }) {
   return (
     <article
       onClick={handleCardClick}
-      className="flex items-center justify-between p-2 w-full bg-gray-800 rounded-none shadow-none border-b border-gray-700 transition-all duration-300 ease-in-out hover:shadow-green-500/20 hover:border-green-500/40 cursor-pointer"
+      className={`flex items-center justify-between p-2 w-full rounded-none shadow-none border-b transition-all duration-300 ease-in-out hover:shadow-green-500/20 hover:border-green-500/40 cursor-pointer ${
+        unread > 0
+          ? "bg-gray-750 border-green-700/30"
+          : "bg-gray-800 border-gray-700"
+      }`}
       style={{
         margin: 0,
         maxWidth: "100vw",
@@ -191,7 +227,9 @@ export default function User({ user, currentUserId }) {
 
       {/* User Info */}
       <div className="flex flex-col justify-center flex-1 min-h-0 py-1">
-        <h4 className="text-xl font-bold text-gray-50 tracking-wide">
+        <h4
+          className={`text-xl font-bold tracking-wide ${unread > 0 ? "text-green-300" : "text-gray-50"}`}
+        >
           {user.name}
         </h4>
 
@@ -217,6 +255,15 @@ export default function User({ user, currentUserId }) {
           )}
         </div>
       </div>
+
+      {/* Unread Badge */}
+      {unread > 0 && (
+        <div className="flex-shrink-0 mx-2">
+          <span className="inline-flex items-center justify-center px-3 py-1 text-sm font-bold text-white bg-green-600 rounded-full min-w-[32px] animate-pulse">
+            {unread > 99 ? "99+" : unread}
+          </span>
+        </div>
+      )}
 
       {/* Action Buttons */}
       <div className="flex items-center justify-center p-2">

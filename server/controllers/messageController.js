@@ -9,37 +9,34 @@ const invalidateInboxCache = require("../utils/invalidateInbox");
 const invalidateMessageCache = require("../utils/invalidateMessages");
 
 exports.sendMessage = async (req, res) => {
-
-  // ✅ Destructure OUTSIDE try so the catch block can access these on duplicate key retry
+ 
+  // Destructure OUTSIDE try so catch block can access on duplicate key retry
   const { to: receiverId, content, messageType = "text", media = null } = req.body;
   const senderId = req.user.userId;
-
+ 
   try {
     // --- Validation ---
     if (!receiverId || !content) {
       return res.status(400).json({ message: "receiverId and content are required" });
     }
-
     if (!mongoose.Types.ObjectId.isValid(receiverId)) {
       return res.status(400).json({ message: "Invalid receiverId" });
     }
-
     if (senderId === receiverId) {
       return res.status(400).json({ message: "Cannot send message to yourself" });
     }
-
-    // --- Verify receiver exists ---
+ 
     const receiverExists = await User.exists({ _id: receiverId });
     if (!receiverExists) {
       return res.status(404).json({ message: "Receiver not found" });
     }
-
-    // --- Get or create the 1-1 chat ---
+ 
+    // --- Get or create 1-1 chat ---
     const sorted = [senderId, receiverId].sort();
     const chatKey = `${sorted[0]}_${sorted[1]}`;
     const now = new Date();
-
-    let chat = await Chat.findOneAndUpdate(
+ 
+    const chat = await Chat.findOneAndUpdate(
       { chatKey },
       {
         $setOnInsert: {
@@ -57,8 +54,8 @@ exports.sendMessage = async (req, res) => {
       },
       { new: true, upsert: true, runValidators: true }
     );
-
-    // --- Create the message ---
+ 
+    // --- Create message ---
     const newMessage = await Message.create({
       chatId: chat._id,
       senderId,
@@ -66,48 +63,68 @@ exports.sendMessage = async (req, res) => {
       messageType,
       ...(media && { media })
     });
-
-    // ✅ Step 1: Update chat FIRST (bumps updatedAt for inbox ordering + sets preview)
+ 
+    // Step 1: Update chat (bumps updatedAt for sort + sets lastMessage preview)
     await Chat.findByIdAndUpdate(chat._id, {
       lastMessage: newMessage._id
     });
-
-    // ✅ Step 2: Invalidate caches AFTER chat is updated
-    // so any cache miss re-fetches fresh data with correct lastMessage
+ 
+    // Step 2: Compute fresh unread count for receiver
+    const receiverParticipant = chat.participants.find(
+      (p) => p.user.toString() === receiverId.toString()
+    );
+    const unreadQuery = {
+      chatId: chat._id,
+      senderId: { $ne: new mongoose.Types.ObjectId(receiverId) },
+      deletedFor: { $nin: [receiverId] }
+    };
+    if (receiverParticipant?.lastReadAt) {
+      unreadQuery.createdAt = { $gt: receiverParticipant.lastReadAt };
+    }
+    const receiverUnreadCount = await Message.countDocuments(unreadQuery);
+ 
+    // Step 3: Invalidate caches AFTER chat is updated
     await invalidateMessageCache(chat._id);
     await invalidateInboxCache([senderId, receiverId]);
-
-    // ✅ Step 3: Populate AFTER cache invalidation
+ 
+    // Step 4: Populate message for socket + response
     const populatedMessage = await newMessage.populate("senderId", "name avatar");
     const messageData = populatedMessage.toObject();
-
-    // ✅ Step 4: Emit socket events LAST (receivers may immediately query the DB)
-    console.log(`📨 EMITTING newMessage to chat:${chat._id}`, {
-      messageId: newMessage._id,
-      content
-    });
+ 
+    // Step 5: Emit socket events
+    // → to chat room (both users viewing this chat get the message)
     req.io.to(`chat:${chat._id}`).emit("newMessage", messageData);
+ 
+    // → to receiver's user room with unread badge update
     req.io.to(`user:${receiverId}`).emit("newMessage", messageData);
-    console.log(`📨 EMITTING to receiver room user:${receiverId}`);
-
-    // ✅ Step 5: Return populated message
+    req.io.to(`user:${receiverId}`).emit("unreadCountUpdate", {
+      chatId: chat._id,
+      senderId,
+      unreadCount: receiverUnreadCount,
+      lastMessage: {
+        content,
+        messageType,
+        createdAt: newMessage.createdAt
+      }
+    });
+ 
+    // Step 6: Return response
     return res.status(201).json({
       success: true,
       message: "Message sent successfully",
       data: messageData
     });
-
+ 
   } catch (error) {
-    // --- Race condition on chat upsert: another request created the chat simultaneously ---
+    // Race condition on upsert — retry the find
     if (error.code === 11000) {
       try {
         const sorted = [senderId, receiverId].sort();
         const chat = await Chat.findOne({ chatKey: `${sorted[0]}_${sorted[1]}` });
-
         if (!chat) {
           return res.status(500).json({ message: "Failed to resolve chat after conflict" });
         }
-
+ 
         const newMessage = await Message.create({
           chatId: chat._id,
           senderId,
@@ -115,33 +132,40 @@ exports.sendMessage = async (req, res) => {
           messageType,
           ...(media && { media })
         });
-
+ 
         await Chat.findByIdAndUpdate(chat._id, { lastMessage: newMessage._id });
         await invalidateMessageCache(chat._id);
         await invalidateInboxCache([senderId, receiverId]);
-
+ 
         const populatedMessage = await newMessage.populate("senderId", "name avatar");
         const messageData = populatedMessage.toObject();
-
+ 
         req.io.to(`chat:${chat._id}`).emit("newMessage", messageData);
         req.io.to(`user:${receiverId}`).emit("newMessage", messageData);
-
+        req.io.to(`user:${receiverId}`).emit("unreadCountUpdate", {
+          chatId: chat._id,
+          senderId,
+          unreadCount: 1,
+          lastMessage: { content, messageType, createdAt: newMessage.createdAt }
+        });
+ 
         return res.status(201).json({
           success: true,
           message: "Message sent successfully",
           data: messageData
         });
-
+ 
       } catch (retryError) {
         console.error("sendMessage retry error:", retryError);
         return res.status(500).json({ message: "Internal server error" });
       }
     }
-
+ 
     console.error("sendMessage error:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+ 
 
 exports.getMessages = async (req, res) => {
   try {

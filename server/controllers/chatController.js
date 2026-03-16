@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Chat = require("../models/chat");
-
+const invalidateInboxCache = require("../utils/invalidateInbox");
+const invalidateMessageCache = require("../utils/invalidateMessages");
 exports.getOrCreateChat = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -68,6 +69,61 @@ exports.getOrCreateChat = async (req, res) => {
     }
 
     console.error("getOrCreateChat error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+
+exports.markAsRead = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { chatId } = req.params;
+    
+    console.log(`\n📞 MARK AS READ REQUEST RECEIVED`);
+    console.log(`   User ID: ${userId}`);
+    console.log(`   Chat ID: ${chatId}\n`);
+ 
+    if (!mongoose.Types.ObjectId.isValid(chatId)) {
+      console.error(`   ❌ Invalid chatId: ${chatId}`);
+      return res.status(400).json({ message: "Invalid chatId" });
+    }
+ 
+    // Update lastReadAt for this user in the chat's participants array
+    const chat = await Chat.findOneAndUpdate(
+      {
+        _id: chatId,
+        "participants.user": userId,
+        "participants.deletedAt": null
+      },
+      {
+        $set: { "participants.$.lastReadAt": new Date() }
+      },
+      { new: true }
+    ).select("_id participants");
+ 
+    if (!chat) {
+      console.error(`   ❌ Chat not found for user ${userId} in chat ${chatId}`);
+      return res.status(404).json({ message: "Chat not found" });
+    }
+    
+    console.log(`   ✅ Database updated - lastReadAt set`);
+ 
+    // Bust inbox cache so next getAllUsers returns unreadCount: 0
+    await invalidateInboxCache([userId]);
+    console.log(`   ✅ Inbox cache invalidated`);
+ 
+    // Emit to user's own room → all open tabs/devices update instantly
+    console.log(`   📤 Emitting unreadCountUpdate to room: user:${userId}`);
+    req.io.to(`user:${userId}`).emit("unreadCountUpdate", {
+      chatId,
+      unreadCount: 0
+    });
+    console.log(`   ✅ Socket event emitted\n`);
+ 
+    return res.status(200).json({ success: true });
+ 
+  } catch (error) {
+    console.error("❌ markAsRead error:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
