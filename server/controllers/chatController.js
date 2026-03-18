@@ -79,9 +79,6 @@ exports.markAsRead = async (req, res) => {
     const userId = req.user.userId;
     const { chatId } = req.params;
     
-    console.log(`\n📞 MARK AS READ REQUEST RECEIVED`);
-    console.log(`   User ID: ${userId}`);
-    console.log(`   Chat ID: ${chatId}\n`);
  
     if (!mongoose.Types.ObjectId.isValid(chatId)) {
       console.error(`   ❌ Invalid chatId: ${chatId}`);
@@ -106,19 +103,13 @@ exports.markAsRead = async (req, res) => {
       return res.status(404).json({ message: "Chat not found" });
     }
     
-    console.log(`   ✅ Database updated - lastReadAt set`);
- 
-    // Bust inbox cache so next getAllUsers returns unreadCount: 0
+
     await invalidateInboxCache([userId]);
-    console.log(`   ✅ Inbox cache invalidated`);
- 
-    // Emit to user's own room → all open tabs/devices update instantly
-    console.log(`   📤 Emitting unreadCountUpdate to room: user:${userId}`);
+
     req.io.to(`user:${userId}`).emit("unreadCountUpdate", {
       chatId,
       unreadCount: 0
     });
-    console.log(`   ✅ Socket event emitted\n`);
  
     return res.status(200).json({ success: true });
  

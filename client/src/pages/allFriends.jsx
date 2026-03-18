@@ -48,7 +48,7 @@ export default function Friends() {
 
     const unsubscribe = subscribeToUnreadUpdates(
       ({ chatId, unreadCount, lastMessage }) => {
-        console.log(`📬 Unread update for chat ${chatId}, count:`, unreadCount);
+
 
         // Update the friend with new unread count and last message
         setFriends((prev) => {

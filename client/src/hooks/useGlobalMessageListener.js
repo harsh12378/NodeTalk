@@ -18,10 +18,9 @@ export const useGlobalMessageListener = () => {
       return;
     }
 
-    console.log("🌍 Attaching global message listener");
-
+   
     const handleNewMessage = (message) => {
-      console.log("📨 [GLOBAL] Received newMessage:", message);
+
 
       // Get current user from JWT token
       const currentUser = getCurrentUserFromToken();
@@ -31,7 +30,7 @@ export const useGlobalMessageListener = () => {
       const senderId = String(message.senderId?._id);
       const currentUserId = String(userId);
 
-      console.log("🔍 Comparing senderId:", senderId, "with currentUserId:", currentUserId);
+
 
       // Only show toast if message is from another user (not from current user)
       if (senderId !== currentUserId && message.senderId?.name) {
@@ -45,11 +44,11 @@ export const useGlobalMessageListener = () => {
 
     // Listen for connection status
     const handleConnect = () => {
-      console.log("✅ Global listener: Socket connected");
+  
     };
 
     const handleDisconnect = (reason) => {
-      console.log("❌ Global listener: Socket disconnected -", reason);
+    
     };
 
     // Attach global listeners
@@ -59,7 +58,7 @@ export const useGlobalMessageListener = () => {
 
     // Cleanup on unmount
     return () => {
-      console.log("🧹 Removing global message listener");
+
       socket.off("newMessage", handleNewMessage);
       socket.off("connect", handleConnect);
       socket.off("disconnect", handleDisconnect);

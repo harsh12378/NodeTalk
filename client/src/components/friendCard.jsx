@@ -16,10 +16,7 @@ export default function FriendCard({ friend, unreadCount = 0, onUpdate }) {
       "checkOnline",
       { targetUserId: friend.friendId._id },
       (response) => {
-        console.log(
-          `✅ checkOnline for ${friend.friendId.name}:`,
-          response.isOnline,
-        );
+     
         setIsOnline(response.isOnline);
       },
     );
@@ -32,14 +29,14 @@ export default function FriendCard({ friend, unreadCount = 0, onUpdate }) {
 
     const handleOnline = ({ userId }) => {
       if (userId === friend.friendId._id) {
-        console.log(`🟢 ${friend.friendId.name} came online`);
+       
         setIsOnline(true);
       }
     };
 
     const handleOffline = ({ userId }) => {
       if (userId === friend.friendId._id) {
-        console.log(`🔴 ${friend.friendId.name} went offline`);
+    
         setIsOnline(false);
       }
     };
@@ -56,18 +53,9 @@ export default function FriendCard({ friend, unreadCount = 0, onUpdate }) {
   // Listen for unread count updates
   useEffect(() => {
     const unsubscribe = subscribeToUnreadUpdates(({ chatId, unreadCount }) => {
-      console.log(
-        `\n📬 FriendCard Listener Triggered for ${friend.friendId.name}`,
-        `\n   Friend Chat ID: ${friend.chatId}`,
-        `\n   Event Chat ID: ${chatId}`,
-        `\n   Match: ${chatId === friend.chatId ? "✅ YES" : "❌ NO"}`,
-        `\n   New Count: ${unreadCount}\n`,
-      );
 
       if (chatId === friend.chatId) {
-        console.log(
-          `🔄 Updating unread count from ${unread} to ${unreadCount}`,
-        );
+      
         setUnread(unreadCount);
       }
     });
@@ -96,7 +84,7 @@ export default function FriendCard({ friend, unreadCount = 0, onUpdate }) {
       setLoading(false);
     } catch (error) {
       alert("some server error");
-      console.log("server error", error);
+  
     }
   };
   const formatLastSeen = (lastSeen) => {

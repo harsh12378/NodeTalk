@@ -211,7 +211,7 @@ exports.sendRequest=async(req,res)=>{
         const senderId=req.user.userId;
         const sender= await User.findOne({_id:senderId});
         if(!sender){
-            console.log("senderId not found");
+            console.log("sender not found");
              return res.status(404).json({ message: "sender not found" });
         }
         const {to}= req.body;

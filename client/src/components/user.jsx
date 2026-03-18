@@ -17,7 +17,7 @@ export default function User({ user, currentUserId, unreadCount = 0 }) {
     if (!socket) return;
 
     socket.emit("checkOnline", { targetUserId: user._id }, (response) => {
-      console.log(`✅ checkOnline for ${user.name}:`, response.isOnline);
+      
       setIsOnline(response.isOnline);
     });
   }, [user._id, user.name]);
@@ -29,14 +29,14 @@ export default function User({ user, currentUserId, unreadCount = 0 }) {
 
     const handleOnline = ({ userId }) => {
       if (userId === user._id) {
-        console.log(`🟢 ${user.name} came online`);
+      
         setIsOnline(true);
       }
     };
 
     const handleOffline = ({ userId }) => {
       if (userId === user._id) {
-        console.log(`🔴 ${user.name} went offline`);
+     
         setIsOnline(false);
       }
     };
@@ -54,7 +54,7 @@ export default function User({ user, currentUserId, unreadCount = 0 }) {
   useEffect(() => {
     const unsubscribe = subscribeToUnreadUpdates(({ chatId, unreadCount }) => {
       if (chatId === user.chatId) {
-        console.log(`📬 Unread count updated for ${user.name}:`, unreadCount);
+       
         setUnread(unreadCount);
       }
     });
