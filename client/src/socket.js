@@ -2,37 +2,48 @@ import { io } from "socket.io-client";
 import API_BASE_URL from "./config";
 
 let socket = null;
+let connectionPromise = null;
 
 export const connectSocket = () => {
+  // Return existing socket if already connected
   if (socket?.connected) {
- 
     return socket;
   }
 
+  // Return existing promise if connection is already in progress
+  if (connectionPromise) {
+    return connectionPromise;
+  }
 
-  
-  socket = io(API_BASE_URL, {
-    withCredentials: true,
-    transports: ["websocket", "polling"],
-    auth: {
-      token: localStorage.getItem("token")
-    }
+  // Create connection promise
+  connectionPromise = new Promise((resolve) => {
+    socket = io(API_BASE_URL, {
+      withCredentials: true,
+      transports: ["websocket", "polling"],
+      auth: {
+        token: localStorage.getItem("token")
+      },
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 5
+    });
+
+    socket.on("connect", () => {
+      setUpUnreadListeners();
+      resolve(socket);
+    });
+
+    socket.on("disconnect", (reason) => {
+      connectionPromise = null; // Reset promise on disconnect
+    });
+
+    socket.on("connect_error", (error) => {
+      console.error("Socket connection error:", error);
+    });
   });
 
-  socket.on("connect", () => {
- 
-    setUpUnreadListeners();
-  });
-
-  socket.on("disconnect", (reason) => {
-  
-  });
-
-  socket.on("connect_error", (error) => {
-  
-  });
-
-  return socket;
+  return socket || connectionPromise;
 };
 
 // Global unread count state management

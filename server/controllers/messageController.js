@@ -110,8 +110,10 @@ exports.sendMessage = async (req, res) => {
     ]);
 
     // --- Emit socket events ---
+    // Emit to chat room (all participants, including receiver)
     req.io.to(`chat:${chat._id}`).emit("newMessage", messageData);
-    req.io.to(`user:${receiverId}`).emit("newMessage", messageData);
+    
+    // Emit unread count update to receiver only
     req.io.to(`user:${receiverId}`).emit("unreadCountUpdate", {
       chatId: chat._id,
       senderId,

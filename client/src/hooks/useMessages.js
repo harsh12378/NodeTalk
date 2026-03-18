@@ -23,8 +23,8 @@ export const useMessages = (chatId) => {
     staleTime: 5 * 60 * 1000,   // treat cache as fresh for 5 mins
     gcTime: 10 * 60 * 1000,     // keep in memory 10 mins after unmount
 
-    refetchOnWindowFocus: false, // socket keeps cache fresh — no need
-    refetchOnMount: false,       // if cache exists and isn't stale, skip refetch
+    refetchOnWindowFocus: true, // refetch when user returns to app
+    refetchOnMount: true,       // Always refetch on mount to get fresh messages
 
     // Show last known message from inbox instantly on first open
     // Full list loads behind it — user always sees something immediately
