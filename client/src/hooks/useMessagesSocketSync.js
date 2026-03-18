@@ -1,4 +1,7 @@
 // hooks/useMessagesSocketSync.js
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { getSocket } from "../socket";
 export const useMessagesSocketSync = (chatId, currentUserId) => { // ← add currentUserId
   const queryClient = useQueryClient();
 
