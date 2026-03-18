@@ -5,19 +5,39 @@ const Chat = require('../models/chat');
 const mongoose = require("mongoose");
 const { Message } = require("../models/message");
 const redisClient = require("../config/redis"); 
+
 const invalidateInboxCache = require("../utils/invalidateInbox");
-const invalidateMessageCache = require("../utils/invalidateMessages");
+const appendMessageToCache = require("../utils/apendMessageCache"); // ← new, replaces invalidateMessages
 
 exports.sendMessage = async (req, res) => {
- 
-  // Destructure OUTSIDE try so catch block can access on duplicate key retry
-  const { to: receiverId, content, messageType = "text", media = null } = req.body;
+  let media = null;
+  if (req.file) {
+    media = {
+      url: req.file.path,
+      publicId: req.file.filename,
+      resourceType: req.file.mimetype.startsWith("video/") ? "video" : "image",
+      bytes: req.file.size,
+      width: req.file.width,
+      height: req.file.height,
+      ...(req.file.duration && { duration: req.file.duration }),
+    };
+  }
+
+  const {
+    to: receiverId,
+    content = "",   // ← default to "" so media-only messages don't fail validation
+    messageType = req.file
+      ? req.file.mimetype.startsWith("video/") ? "video" : "image"
+      : "text",
+  } = req.body;
+
   const senderId = req.user.userId;
- 
+
   try {
     // --- Validation ---
-    if (!receiverId || !content) {
-      return res.status(400).json({ message: "receiverId and content are required" });
+    // ← content OR media must be present, not both required
+    if (!receiverId || (!content && !req.file)) {
+      return res.status(400).json({ message: "receiverId and content or media are required" });
     }
     if (!mongoose.Types.ObjectId.isValid(receiverId)) {
       return res.status(400).json({ message: "Invalid receiverId" });
@@ -25,17 +45,17 @@ exports.sendMessage = async (req, res) => {
     if (senderId === receiverId) {
       return res.status(400).json({ message: "Cannot send message to yourself" });
     }
- 
+
     const receiverExists = await User.exists({ _id: receiverId });
     if (!receiverExists) {
       return res.status(404).json({ message: "Receiver not found" });
     }
- 
+
     // --- Get or create 1-1 chat ---
     const sorted = [senderId, receiverId].sort();
     const chatKey = `${sorted[0]}_${sorted[1]}`;
     const now = new Date();
- 
+
     const chat = await Chat.findOneAndUpdate(
       { chatKey },
       {
@@ -45,57 +65,52 @@ exports.sendMessage = async (req, res) => {
             role: "member",
             joinedAt: now,
             deletedAt: null,
-            lastReadAt: null
+            lastReadAt: null,
           })),
           chatKey,
           isGroup: false,
-          createdBy: senderId
-        }
+          createdBy: senderId,
+        },
       },
       { new: true, upsert: true, runValidators: true }
     );
- 
+
     // --- Create message ---
     const newMessage = await Message.create({
       chatId: chat._id,
       senderId,
       content,
       messageType,
-      ...(media && { media })
+      ...(media && { media }),
     });
- 
-    // Step 1: Update chat (bumps updatedAt for sort + sets lastMessage preview)
-    await Chat.findByIdAndUpdate(chat._id, {
-      lastMessage: newMessage._id
-    });
- 
-    // Step 2: Compute fresh unread count for receiver
+
+    // --- Populate early so messageData is ready for cache + socket ---
+    const populatedMessage = await newMessage.populate("senderId", "name avatar");
+    const messageData = populatedMessage.toObject();
+
+    // --- Receiver's unread query (build before parallel block) ---
     const receiverParticipant = chat.participants.find(
       (p) => p.user.toString() === receiverId.toString()
     );
     const unreadQuery = {
       chatId: chat._id,
       senderId: { $ne: new mongoose.Types.ObjectId(receiverId) },
-      deletedFor: { $nin: [receiverId] }
+      deletedFor: { $nin: [receiverId] },
     };
     if (receiverParticipant?.lastReadAt) {
       unreadQuery.createdAt = { $gt: receiverParticipant.lastReadAt };
     }
-    const receiverUnreadCount = await Message.countDocuments(unreadQuery);
- 
-    // Step 3: Invalidate caches AFTER chat is updated
-    await invalidateMessageCache(chat._id);
-    await invalidateInboxCache([senderId, receiverId]);
- 
-    // Step 4: Populate message for socket + response
-    const populatedMessage = await newMessage.populate("senderId", "name avatar");
-    const messageData = populatedMessage.toObject();
- 
-    // Step 5: Emit socket events
-    // → to chat room (both users viewing this chat get the message)
+
+    // --- All independent operations in parallel ---
+    const [, receiverUnreadCount] = await Promise.all([
+      Chat.findByIdAndUpdate(chat._id, { lastMessage: newMessage._id }), // ← parallel
+      Message.countDocuments(unreadQuery),                                // ← parallel
+      appendMessageToCache(chat._id, messageData),                       // ← append, not invalidate
+      invalidateInboxCache([senderId, receiverId]),                       // ← inbox still invalidates (correct)
+    ]);
+
+    // --- Emit socket events ---
     req.io.to(`chat:${chat._id}`).emit("newMessage", messageData);
- 
-    // → to receiver's user room with unread badge update
     req.io.to(`user:${receiverId}`).emit("newMessage", messageData);
     req.io.to(`user:${receiverId}`).emit("unreadCountUpdate", {
       chatId: chat._id,
@@ -104,19 +119,17 @@ exports.sendMessage = async (req, res) => {
       lastMessage: {
         content,
         messageType,
-        createdAt: newMessage.createdAt
-      }
+        createdAt: newMessage.createdAt,
+      },
     });
- 
-    // Step 6: Return response
+
     return res.status(201).json({
       success: true,
       message: "Message sent successfully",
-      data: messageData
+      data: messageData,
     });
- 
+
   } catch (error) {
-    // Race condition on upsert — retry the find
     if (error.code === 11000) {
       try {
         const sorted = [senderId, receiverId].sort();
@@ -124,49 +137,50 @@ exports.sendMessage = async (req, res) => {
         if (!chat) {
           return res.status(500).json({ message: "Failed to resolve chat after conflict" });
         }
- 
+
         const newMessage = await Message.create({
           chatId: chat._id,
           senderId,
           content,
           messageType,
-          ...(media && { media })
+          ...(media && { media }),
         });
- 
-        await Chat.findByIdAndUpdate(chat._id, { lastMessage: newMessage._id });
-        await invalidateMessageCache(chat._id);
-        await invalidateInboxCache([senderId, receiverId]);
- 
+
         const populatedMessage = await newMessage.populate("senderId", "name avatar");
         const messageData = populatedMessage.toObject();
- 
+
+        // ← retry block also gets parallel ops + cache append
+        await Promise.all([
+          Chat.findByIdAndUpdate(chat._id, { lastMessage: newMessage._id }),
+          appendMessageToCache(chat._id, messageData),
+          invalidateInboxCache([senderId, receiverId]),
+        ]);
+
         req.io.to(`chat:${chat._id}`).emit("newMessage", messageData);
         req.io.to(`user:${receiverId}`).emit("newMessage", messageData);
         req.io.to(`user:${receiverId}`).emit("unreadCountUpdate", {
           chatId: chat._id,
           senderId,
           unreadCount: 1,
-          lastMessage: { content, messageType, createdAt: newMessage.createdAt }
+          lastMessage: { content, messageType, createdAt: newMessage.createdAt },
         });
- 
+
         return res.status(201).json({
           success: true,
           message: "Message sent successfully",
-          data: messageData
+          data: messageData,
         });
- 
+
       } catch (retryError) {
         console.error("sendMessage retry error:", retryError);
         return res.status(500).json({ message: "Internal server error" });
       }
     }
- 
+
     console.error("sendMessage error:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
- 
-
 exports.getMessages = async (req, res) => {
   try {
     const userId = req.user.userId;

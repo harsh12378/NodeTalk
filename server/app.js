@@ -72,6 +72,7 @@ const authRoutes = require('./routes/authRoutes');
 const usersRoutes = require('./routes/usersRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+
 app.use('/api/auth', authRoutes);
 app.use('/api/users', verifyToken, usersRoutes);
 app.use('/api/messages', verifyToken, messageRoutes);

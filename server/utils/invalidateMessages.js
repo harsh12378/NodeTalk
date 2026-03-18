@@ -10,7 +10,7 @@ const invalidateMessageCache = async (chatId) => {
   try {
     // SCAN is non-blocking, safe for production (avoids KEYS *)
     const pattern = `messages:${chatId}:*`;
-    let cursor = 0;
+    let cursor = "0";
 
     do {
       const { cursor: nextCursor, keys } = await redisClient.scan(cursor, {
@@ -23,7 +23,7 @@ const invalidateMessageCache = async (chatId) => {
       }
 
       cursor = nextCursor;
-    } while (cursor !== 0);
+    } while (cursor !== "0");
 
   } catch (err) {
     console.error("Cache invalidation error:", err);
