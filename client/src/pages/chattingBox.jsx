@@ -1,4 +1,11 @@
-import { useState, useMemo, useEffect, useRef, useLayoutEffect } from "react";
+import {
+  useState,
+  useMemo,
+  useEffect,
+  useRef,
+  useLayoutEffect,
+  useCallback,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { getSocket } from "../socket";
@@ -13,8 +20,23 @@ import {
   showMessageErrorToast,
 } from "../components/CustomToast";
 
-// Default avatar placeholder
 const DEFAULT_AVATAR = "https://via.placeholder.com/48?text=User";
+
+// Stable helper — works whether senderId is a raw string or populated object
+const getSenderId = (senderId) => {
+  if (!senderId) return null;
+  if (typeof senderId === "string") return senderId;
+  return senderId._id;
+};
+
+// Simple debounce
+const debounce = (fn, ms) => {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+};
 
 export default function ChattingBox({ receiver, currentUser }) {
   const navigate = useNavigate();
@@ -23,11 +45,13 @@ export default function ChattingBox({ receiver, currentUser }) {
   const [sending, setSending] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
   const [chatId, setChatId] = useState(null);
-  const [nextCursor, setNextCursor] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const messageEndRef = useRef(null);
 
-  // Media states
+  const messageEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const shouldScrollRef = useRef(true);
+  const prevMessageCountRef = useRef(0);
+
   const [selectedFile, setSelectedFile] = useState(null);
   const [filePreview, setFilePreview] = useState(null);
   const [mediaCaption, setMediaCaption] = useState("");
@@ -35,29 +59,47 @@ export default function ChattingBox({ receiver, currentUser }) {
 
   const currentReceiver = useMemo(() => receiver || {}, [receiver]);
 
-  // Fetch messages using React Query (with automatic caching)
-  const { data: messagesData = {}, isLoading: isLoadingMessages } =
-    useMessages(chatId);
-  const messages = messagesData.data || [];
-  const hasMore = messagesData.pagination?.hasMore || false;
+  // ── Messages ────────────────────────────────────────────────────
+  const {
+    data: messagesData = {},
+    isLoading: isLoadingMessages,
+    isPlaceholderData,
+  } = useMessages(chatId);
 
-  // Sync new messages to cache via socket
+  // API returns newest-first → reverse for display (oldest top, newest bottom)
+  const messages = useMemo(() => {
+    const raw = messagesData.data || [];
+    return [...raw].reverse();
+  }, [messagesData.data]);
+
+  const hasMore = messagesData.pagination?.hasMore || false;
+  const nextCursor = messagesData.pagination?.nextCursor || null;
+
   useMessagesSocketSync(chatId);
+
+  // ── Auto-scroll only on new messages, not pagination ───────────
   useLayoutEffect(() => {
-    messageEndRef.current?.scrollIntoView();
+    const currentCount = messages.length;
+    const prevCount = prevMessageCountRef.current;
+    if (shouldScrollRef.current && currentCount > prevCount) {
+      messageEndRef.current?.scrollIntoView({
+        behavior: prevCount === 0 ? "auto" : "smooth",
+      });
+    }
+    prevMessageCountRef.current = currentCount;
   }, [messages]);
 
-  // ── Step 1: Get or create chat when receiver changes ───────────
+  // ── Get or create chat ──────────────────────────────────────────
   useEffect(() => {
     if (!currentReceiver?._id) return;
-
     setChatId(null);
-    setNextCursor(null);
+    shouldScrollRef.current = true;
+    prevMessageCountRef.current = 0;
 
     const getOrCreateChat = async () => {
       try {
         const token = localStorage.getItem("token");
-        const response = await fetch(`${API_BASE_URL}/api/chat/get-or-create`, {
+        const res = await fetch(`${API_BASE_URL}/api/chat/get-or-create`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -65,10 +107,8 @@ export default function ChattingBox({ receiver, currentUser }) {
           },
           body: JSON.stringify({ friendId: currentReceiver._id }),
         });
-
-        if (!response.ok) throw new Error("Failed to get or create chat");
-
-        const data = await response.json();
+        if (!res.ok) throw new Error("Failed to get or create chat");
+        const data = await res.json();
         setChatId(data.chatId);
       } catch (err) {
         console.error("Chat creation failed:", err);
@@ -78,177 +118,137 @@ export default function ChattingBox({ receiver, currentUser }) {
     getOrCreateChat();
   }, [currentReceiver._id]);
 
-  // ── Step 2: Join room + mark as read when chatId is set ──
+  // ── markChatAsRead — patches inbox cache locally, no refetch ───
+  const markChatAsRead = useCallback(
+    async (chatIdToMark) => {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch(
+          `${API_BASE_URL}/api/chat/${chatIdToMark}/read`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+        if (res.ok) {
+          queryClient.setQueryData(["inbox"], (old) => {
+            if (!old) return old;
+            return old.map((u) =>
+              u.chatId?.toString() === chatIdToMark?.toString()
+                ? { ...u, unreadCount: 0 }
+                : u
+            );
+          });
+        }
+      } catch (err) {
+        console.error("Error marking chat as read:", err);
+      }
+    },
+    [queryClient]
+  );
+
+  // Debounced — collapses rapid back-to-back calls (join + first socket message)
+  const markChatAsReadDebounced = useMemo(
+    () => debounce((id) => markChatAsRead(id), 500),
+    [markChatAsRead]
+  );
+
+  // ── Join room + initial read mark ───────────────────────────────
   useEffect(() => {
     if (!chatId) return;
-
     const socket = getSocket();
-    if (!socket) {
-      console.error("❌ Socket not available");
-      return;
-    }
-
-    console.log("🔗 Joining chat room:", chatId);
+    if (!socket) return;
     socket.emit("joinChat", chatId);
-
     showConnectedToast(currentReceiver.name);
+    markChatAsReadDebounced(chatId);
+  }, [chatId, currentReceiver.name, markChatAsReadDebounced]);
 
-    // Mark chat as read when opening it
-    markChatAsRead(chatId)
-      .then(() => {
-        console.log("✅ Successfully marked chat as read");
-      })
-      .catch((error) => {
-        console.error("❌ Failed to mark chat as read:", error);
-      });
-  }, [chatId, currentReceiver.name]);
+  // ── Reconnect + mark read on incoming messages ──────────────────
+  useEffect(() => {
+    if (!chatId) return;
+    const socket = getSocket();
+    if (!socket) return;
 
-  // ── Mark chat as read ───────────────────────────────────────────
-  const markChatAsRead = async (chatIdToMark) => {
-    try {
-      const token = localStorage.getItem("token");
-      console.log(`📞 Calling mark read API for chat: ${chatIdToMark}`);
+    const handleReconnect = () => socket.emit("joinChat", chatId);
 
-      const response = await fetch(
-        `${API_BASE_URL}/api/chat/${chatIdToMark}/read`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
+    const handleNewMessageFromOthers = (message) => {
+      if (message.chatId?.toString() !== chatId?.toString()) return;
+      const isOwn = getSenderId(message.senderId) === currentUser?._id;
+      if (!isOwn) markChatAsReadDebounced(chatId);
+    };
 
-      console.log(`📊 Mark read API response status: ${response.status}`);
+    socket.on("connect", handleReconnect);
+    socket.on("newMessage", handleNewMessageFromOthers);
+    return () => {
+      socket.off("connect", handleReconnect);
+      socket.off("newMessage", handleNewMessageFromOthers);
+    };
+  }, [chatId, currentUser?._id, markChatAsReadDebounced]);
 
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`✅ Chat ${chatIdToMark} marked as read`, data);
-
-        // Invalidate inbox cache so allUsers page shows updated unread counts
-        queryClient.invalidateQueries({ queryKey: ["inbox"] });
-
-        return true;
-      } else {
-        const error = await response.text();
-        console.error(
-          `❌ Failed to mark chat as read. Status: ${response.status}, Error: ${error}`,
-        );
-        return false;
-      }
-    } catch (err) {
-      console.error("❌ Error marking chat as read:", err);
-      return false;
-    }
-  };
-
-  // ── Load older messages (pagination) ───────────────────────────
+  // ── Pagination ──────────────────────────────────────────────────
   const loadMoreMessages = async () => {
-    if (!hasMore || loadingMore || !nextCursor) return;
+    if (!hasMore || loadingMore || !nextCursor || !chatId) return;
+
+    const container = messagesContainerRef.current;
+    const prevScrollHeight = container?.scrollHeight || 0;
+
+    shouldScrollRef.current = false;
     setLoadingMore(true);
+
     try {
       const token = localStorage.getItem("token");
       const params = new URLSearchParams({ limit: 30, before: nextCursor });
-      const response = await fetch(
+      const res = await fetch(
         `${API_BASE_URL}/api/messages/${chatId}?${params.toString()}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
+        { headers: { Authorization: `Bearer ${token}` } }
       );
+      if (!res.ok) throw new Error("Failed to fetch messages");
+      const { data, pagination } = await res.json();
 
-      if (!response.ok) throw new Error("Failed to fetch messages");
-
-      const { data, pagination } = await response.json();
-
-      // Update cache with older messages
-      queryClient.setQueryData(["messages", chatId, null], (oldData) => {
-        if (!oldData) return oldData;
-        return {
-          ...oldData,
-          data: [...oldData.data, ...data],
-          pagination,
-        };
+      queryClient.setQueryData(["messages", chatId, null], (old) => {
+        if (!old) return old;
+        return { ...old, data: [...old.data, ...data], pagination };
       });
 
-      setNextCursor(pagination.nextCursor);
+      requestAnimationFrame(() => {
+        if (container)
+          container.scrollTop = container.scrollHeight - prevScrollHeight;
+        shouldScrollRef.current = true;
+      });
     } catch (err) {
       console.error("Failed to load more messages:", err);
+      shouldScrollRef.current = true;
     } finally {
       setLoadingMore(false);
     }
   };
 
-  // ── Handle socket reconnection ────────────────────────────────
-  useEffect(() => {
-    if (!chatId) return;
-
-    const socket = getSocket();
-    if (!socket) return;
-
-    const handleReconnect = () => {
-      console.log("🔁 Socket reconnected, rejoining chat:", chatId);
-      socket.emit("joinChat", chatId);
-    };
-
-    const handleNewMessageFromOthers = (message) => {
-      // Only mark as read if it's from other user
-      if (message.chatId?.toString() === chatId?.toString()) {
-        const isOwnMessage = message.senderId?._id === currentUser?._id;
-        if (!isOwnMessage) {
-          markChatAsRead(chatId);
-        }
-      }
-    };
-
-    socket.on("connect", handleReconnect);
-    socket.on("newMessage", handleNewMessageFromOthers);
-
-    return () => {
-      socket.off("connect", handleReconnect);
-      socket.off("newMessage", handleNewMessageFromOthers);
-    };
-  }, [chatId, currentUser?._id]);
-
-  // ── Presence: online/offline ───────────────────────────────────
-  // Check initial online status on mount
+  // ── Presence ────────────────────────────────────────────────────
   useEffect(() => {
     if (!currentReceiver._id) return;
-
     const socket = getSocket();
     if (!socket) return;
-
-    socket.emit(
-      "checkOnline",
-      { targetUserId: currentReceiver._id },
-      (response) => {
-        console.log(
-          `✅ checkOnline for ${currentReceiver.name}:`,
-          response.isOnline,
-        );
-        setIsOnline(response.isOnline);
-      },
+    socket.emit("checkOnline", { targetUserId: currentReceiver._id }, (r) =>
+      setIsOnline(r.isOnline)
     );
-  }, [currentReceiver._id, currentReceiver.name]);
+  }, [currentReceiver._id]);
 
-  // Listen for online/offline updates
   useEffect(() => {
     if (!currentReceiver._id) return;
-
     const socket = getSocket();
     if (!socket) return;
 
     const handleOnline = ({ userId }) => {
       if (userId === currentReceiver._id) {
-        console.log(`🟢 ${currentReceiver.name} came online`);
         setIsOnline(true);
         showUserOnlineToast(currentReceiver.name);
       }
     };
-
     const handleOffline = ({ userId }) => {
       if (userId === currentReceiver._id) {
-        console.log(`🔴 ${currentReceiver.name} went offline`);
         setIsOnline(false);
         showUserOfflineToast(currentReceiver.name);
       }
@@ -256,44 +256,30 @@ export default function ChattingBox({ receiver, currentUser }) {
 
     socket.on("userOnline", handleOnline);
     socket.on("userOffline", handleOffline);
-
     return () => {
       socket.off("userOnline", handleOnline);
       socket.off("userOffline", handleOffline);
     };
   }, [currentReceiver._id, currentReceiver.name]);
 
-  // ── Send message ───────────────────────────────────────────────
+  // ── File handling ───────────────────────────────────────────────
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // Validate file type
     const isImage = file.type.startsWith("image/");
     const isVideo = file.type.startsWith("video/");
-
     if (!isImage && !isVideo) {
       showMessageErrorToast("Only images and videos are supported");
       return;
     }
-
-    // Check file size (50MB max)
     if (file.size > 50 * 1024 * 1024) {
       showMessageErrorToast("File size must be less than 50MB");
       return;
     }
-
     setSelectedFile(file);
-
-    // Create preview
     const reader = new FileReader();
-    reader.onload = (e) => {
-      setFilePreview({
-        src: e.target.result,
-        type: isVideo ? "video" : "image",
-        name: file.name,
-      });
-    };
+    reader.onload = (e) =>
+      setFilePreview({ src: e.target.result, type: isVideo ? "video" : "image" });
     reader.readAsDataURL(file);
   };
 
@@ -301,596 +287,436 @@ export default function ChattingBox({ receiver, currentUser }) {
     setSelectedFile(null);
     setFilePreview(null);
     setMediaCaption("");
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const sendMedia = async () => {
-    if (!selectedFile || !currentUser) return;
+  // ── Optimistic helper ───────────────────────────────────────────
+  const addOptimistic = useCallback(
+    (msg) => {
+      shouldScrollRef.current = true;
+      queryClient.setQueryData(["messages", chatId, null], (old) => {
+        if (!old) return old;
+        return { ...old, data: [msg, ...old.data] };
+      });
+    },
+    [chatId, queryClient]
+  );
 
+  const replaceOptimistic = useCallback(
+    (tempId, realMsg) => {
+      queryClient.setQueryData(["messages", chatId, null], (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          data: old.data.map((m) =>
+            m._id === tempId ? { ...realMsg, pending: false } : m
+          ),
+        };
+      });
+    },
+    [chatId, queryClient]
+  );
+
+  const removeOptimistic = useCallback(
+    (tempId) => {
+      queryClient.setQueryData(["messages", chatId, null], (old) => {
+        if (!old) return old;
+        return { ...old, data: old.data.filter((m) => m._id !== tempId) };
+      });
+    },
+    [chatId, queryClient]
+  );
+
+  // ── Send media ──────────────────────────────────────────────────
+  const sendMedia = async () => {
+    if (!selectedFile || !currentUser || !chatId) return;
     setSending(true);
     const tempId = `temp_${Date.now()}`;
     const isVideo = selectedFile.type.startsWith("video/");
 
-    // Optimistic update to cache
-    const optimisticMessage = {
+    addOptimistic({
       _id: tempId,
       chatId,
-      content: mediaCaption || (isVideo ? "📹 Video" : "🖼️ Image"),
+      content: mediaCaption || "",
       messageType: isVideo ? "video" : "image",
-      media: {
-        url: filePreview.src,
-        resourceType: isVideo ? "video" : "image",
-      },
-      senderId: {
-        _id: currentUser._id,
-        name: currentUser.name,
-        avatar: currentUser.avatar,
-      },
+      media: { url: filePreview.src, resourceType: isVideo ? "video" : "image" },
+      senderId: { _id: currentUser._id, name: currentUser.name, avatar: currentUser.avatar },
       createdAt: new Date().toISOString(),
       pending: true,
-    };
-
-    // Add optimistic message to cache
-    queryClient.setQueryData(["messages", chatId, null], (oldData) => {
-      if (!oldData) return oldData;
-      return {
-        ...oldData,
-        data: [optimisticMessage, ...oldData.data],
-      };
     });
 
     try {
       const token = localStorage.getItem("token");
       const formData = new FormData();
       formData.append("to", currentReceiver._id);
-      formData.append(
-        "content",
-        mediaCaption || (isVideo ? "📹 Video" : "🖼️ Image"),
-      );
+      formData.append("content", mediaCaption || "");
       formData.append("media", selectedFile);
 
-      const response = await fetch(`${API_BASE_URL}/api/messages/send`, {
+      const res = await fetch(`${API_BASE_URL}/api/messages/send`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
+      if (!res.ok) throw new Error("Failed to send media");
 
-      if (!response.ok) throw new Error("Failed to send media");
-
+      const { data: sentMessage } = await res.json();
+      replaceOptimistic(tempId, sentMessage);
       showMessageSentToast();
       cancelMediaSelection();
     } catch (err) {
       console.error("Send media failed:", err);
       showMessageErrorToast("Failed to send media");
-      // Roll back optimistic update
-      queryClient.setQueryData(["messages", chatId, null], (oldData) => {
-        if (!oldData) return oldData;
-        return {
-          ...oldData,
-          data: oldData.data.filter((m) => m._id !== tempId),
-        };
-      });
+      removeOptimistic(tempId);
     } finally {
       setSending(false);
     }
   };
 
+  // ── Send text ───────────────────────────────────────────────────
   const sendMessage = async () => {
-    if (!input.trim() || sending || !currentUser) return;
-
+    if (!input.trim() || sending || !currentUser || !chatId) return;
     const messageText = input.trim();
     setInput("");
     setSending(true);
-
-    // Optimistic update
     const tempId = `temp_${Date.now()}`;
-    const optimisticMessage = {
+
+    addOptimistic({
       _id: tempId,
       chatId,
       content: messageText,
-      senderId: {
-        _id: currentUser._id,
-        name: currentUser.name,
-        avatar: currentUser.avatar,
-      },
+      messageType: "text",
+      senderId: { _id: currentUser._id, name: currentUser.name, avatar: currentUser.avatar },
       createdAt: new Date().toISOString(),
       pending: true,
-    };
-
-    // Add optimistic message to cache
-    queryClient.setQueryData(["messages", chatId, null], (oldData) => {
-      if (!oldData) return oldData;
-      return {
-        ...oldData,
-        data: [optimisticMessage, ...oldData.data],
-      };
     });
 
     try {
       const token = localStorage.getItem("token");
-      console.log("Sending message to API:", {
-        to: currentReceiver._id,
-        content: messageText,
-      });
-      const response = await fetch(`${API_BASE_URL}/api/messages/send`, {
+      const res = await fetch(`${API_BASE_URL}/api/messages/send`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          to: currentReceiver._id,
-          content: messageText,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ to: currentReceiver._id, content: messageText }),
       });
+      if (!res.ok) throw new Error("Failed to send message");
 
-      if (!response.ok) throw new Error("Failed to send message");
-
+      const { data: sentMessage } = await res.json();
+      // Replace temp with real _id — socket dedup in useMessagesSocketSync
+      // will find this _id already present and skip → no double render
+      replaceOptimistic(tempId, sentMessage);
       showMessageSentToast();
-      // socket "newMessage" event will replace the optimistic message via cache
     } catch (err) {
       console.error("Send message failed:", err);
       showMessageErrorToast("Failed to send message");
-      // Roll back optimistic message and restore input
-      queryClient.setQueryData(["messages", chatId, null], (oldData) => {
-        if (!oldData) return oldData;
-        return {
-          ...oldData,
-          data: oldData.data.filter((m) => m._id !== tempId),
-        };
-      });
+      removeOptimistic(tempId);
       setInput(messageText);
     } finally {
       setSending(false);
     }
   };
 
-  // ── Keyboard handler ───────────────────────────────────────────
-  const handleKeyPress = (e) => {
+  const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
   };
 
-  // ── Format last seen ───────────────────────────────────────────
+  // ── Formatters ──────────────────────────────────────────────────
   const formatLastSeen = (lastSeen) => {
     if (!lastSeen) return "Unknown";
-
     const now = new Date();
-    const lastSeenDate = new Date(lastSeen);
-    const diffInMs = now - lastSeenDate;
-    const diffInMinutes = Math.floor(diffInMs / (1000 * 60));
-    const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
-    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
-
-    if (diffInMinutes < 1) return "just now";
-    if (diffInMinutes < 60) return `${diffInMinutes} minutes ago`;
-    if (diffInHours < 24) return `${diffInHours} hours ago`;
-    if (diffInDays === 1) return "yesterday";
-    if (diffInDays < 7) return `${diffInDays} days ago`;
-
-    return lastSeenDate.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year:
-        lastSeenDate.getFullYear() !== now.getFullYear()
-          ? "numeric"
-          : undefined,
-    });
+    const d = new Date(lastSeen);
+    const mins = Math.floor((now - d) / 60000);
+    const hrs = Math.floor(mins / 60);
+    const days = Math.floor(hrs / 24);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    if (hrs < 24) return `${hrs}h ago`;
+    if (days === 1) return "yesterday";
+    if (days < 7) return `${days}d ago`;
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
 
+  const formatTime = (dateStr) =>
+    dateStr
+      ? new Date(dateStr).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "";
+
+  const showSkeleton = isLoadingMessages && !isPlaceholderData && messages.length === 0;
+
   return (
-    <div className="flex flex-col h-dvh w-full bg-gray-900 text-green-100 relative overflow-hidden ">
-      {/* Floating Header with receiver info */}
-      <div className=" flex items-center gap-4 p-4 border-b border-green-700 bg-gray-900/90 backdrop-blur-md flex-shrink-0 z-10">
-        {/* Back Button */}
+    <div className="flex flex-col h-dvh w-full bg-gray-900 text-green-100 relative overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-green-900/60 bg-gray-900/95 backdrop-blur-md flex-shrink-0 z-10">
         <button
           onClick={() => navigate(-1)}
-          className="flex-shrink-0 p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-green-400"
-          aria-label="Go back"
-          title="Go back"
+          className="flex-shrink-0 p-2 rounded-xl hover:bg-gray-800 transition-colors text-gray-500 hover:text-green-400"
         >
-          <svg
-            className="w-6 h-6"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 19l-7-7 7-7"
-            />
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
 
-        <div className="relative">
+        <div className="relative flex-shrink-0">
           <img
             src={currentReceiver.avatar || DEFAULT_AVATAR}
             alt={currentReceiver.name}
-            className={`w-12 h-12 rounded-full border-4 ${
-              isOnline ? "border-green-500" : "border-gray-600"
+            className="w-10 h-10 rounded-full object-cover"
+          />
+          <span
+            className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-gray-900 transition-colors duration-300 ${
+              isOnline ? "bg-green-400" : "bg-gray-600"
             }`}
           />
-          {isOnline && (
-            <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-gray-900 rounded-full"></span>
-          )}
         </div>
-        <div>
-          <h2 className="text-xl font-bold text-green-300">
+
+        <div className="flex-1 min-w-0">
+          <h2 className="text-sm font-semibold text-green-200 truncate leading-tight">
             {currentReceiver.name}
           </h2>
-          <span className="text-sm text-gray-400">
-            {isOnline
-              ? "Online"
-              : `Last seen: ${formatLastSeen(currentReceiver?.lastSeen)}`}
-          </span>
+          <p className="text-xs leading-tight">
+            {isOnline ? (
+              <span className="text-green-400">Online</span>
+            ) : (
+              <span className="text-gray-500">
+                Last seen {formatLastSeen(currentReceiver?.lastSeen)}
+              </span>
+            )}
+          </p>
         </div>
       </div>
 
-      <div className="flex-1 relative min-h-1 ">
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-emerald-900/30 to-gray-800"></div>
-
-        {/* Messages content */}
+      {/* Messages */}
+      <div className="flex-1 relative min-h-0">
+        <div className="absolute inset-0 bg-gray-900" />
         <div
-          className="relative z-[1] h-full overflow-y-auto p-4 space-y-3"
+          ref={messagesContainerRef}
+          className="relative z-[1] h-full overflow-y-auto px-4 py-3 space-y-1"
           style={{ overflowX: "hidden" }}
         >
-          {messages.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-gray-400">
+          {hasMore && (
+            <div className="flex justify-center py-2">
+              <button
+                onClick={loadMoreMessages}
+                disabled={loadingMore}
+                className="text-xs text-gray-500 hover:text-green-400 transition-colors px-3 py-1.5 rounded-full border border-gray-700 hover:border-green-800 disabled:opacity-40"
+              >
+                {loadingMore ? "Loading..." : "Load older messages"}
+              </button>
+            </div>
+          )}
+
+          {showSkeleton && (
+            <div className="flex items-center justify-center h-full">
+              <div className="w-5 h-5 border-2 border-green-700 border-t-green-400 rounded-full animate-spin" />
+            </div>
+          )}
+
+          {!isLoadingMessages && messages.length === 0 && (
+            <div className="flex items-center justify-center h-full text-gray-600">
               <div className="text-center">
-                <div className="text-6xl mb-4 animate-pulse">💬</div>
-                <p className="text-lg">
-                  Start a conversation with {currentReceiver.name}
-                </p>
-                <p className="text-sm text-gray-600 mt-2">
-                  Messages are end-to-end encrypted
-                </p>
+                <div className="text-4xl mb-3">💬</div>
+                <p className="text-sm">Start a conversation with {currentReceiver.name}</p>
               </div>
             </div>
-          ) : (
-            messages.map((msg, i) => {
-              const isOwnMessage = msg.senderId?._id === currentUser._id;
-              const isImageMessage = msg.messageType === "image";
-              const isVideoMessage = msg.messageType === "video";
+          )}
 
-              return (
-                <div
-                  key={i}
-                  className={`flex ${isOwnMessage ? "justify-end" : "justify-start"} mb-1 message-enter`}
-                  style={{
-                    animationDelay: `${i * 0.1}s`,
-                  }}
-                >
-                  {!isOwnMessage && (
-                    <div className="w-8 h-8 rounded-full mr-3 self-start flex-shrink-0 bg-green-600 flex items-center justify-center">
-                      <span className="text-white text-sm font-bold tracking-wide drop-shadow-sm">
+          {messages.map((msg, i) => {
+            const isOwn = getSenderId(msg.senderId) === currentUser?._id;
+            const isImage = msg.messageType === "image";
+            const isVideo = msg.messageType === "video";
+            const prevMsg = messages[i - 1];
+            const sameAsPrev =
+              getSenderId(prevMsg?.senderId) === getSenderId(msg.senderId);
+            const showAvatar = !isOwn && !sameAsPrev;
+
+            return (
+              <div
+                key={msg._id}
+                className={`flex items-end gap-2 ${isOwn ? "justify-end" : "justify-start"} ${
+                  sameAsPrev ? "mt-0.5" : "mt-3"
+                }`}
+              >
+                {!isOwn && (
+                  <div className="w-6 h-6 flex-shrink-0 self-end">
+                    {showAvatar && (
+                      <div className="w-6 h-6 rounded-full bg-green-900 flex items-center justify-center text-xs font-semibold text-green-300">
                         {currentReceiver.name?.[0]?.toUpperCase() || "U"}
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex flex-col max-w-xs lg:max-w-md">
-                    {/* Media message */}
-                    {(isImageMessage || isVideoMessage) && msg.media?.url && (
-                      <div
-                        className={`rounded-3xl overflow-hidden shadow-md ${
-                          isOwnMessage ? "rounded-tr-none" : "rounded-tl-none"
-                        } max-w-xs`}
-                      >
-                        {isImageMessage && (
-                          <img
-                            src={msg.media.url}
-                            alt="Shared media"
-                            className="max-w-full h-auto max-h-80 object-cover"
-                            loading="lazy"
-                          />
-                        )}
-                        {isVideoMessage && (
-                          <video
-                            src={msg.media.url}
-                            controls
-                            className="max-w-full h-auto max-h-80 bg-black rounded-3xl"
-                          />
-                        )}
                       </div>
                     )}
+                  </div>
+                )}
 
-                    {/* Caption or text message */}
-                    {msg.content && (
-                      <div
-                        className={`px-3 py-2 rounded-3xl break-words shadow-md relative transition-all duration-300 ease-in-out transform hover:scale-[1.01] ${
-                          isOwnMessage
-                            ? "bg-green-700 text-white self-end rounded-tr-none"
-                            : "bg-gray-700 text-green-100 self-start rounded-tl-none"
-                        }`}
-                        style={{
-                          wordWrap: "break-word",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        <div className="text-white text-base font-bold tracking-wide">
-                          {msg.content}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Timestamp and delivery status */}
+                <div className={`flex flex-col max-w-[70%] ${isOwn ? "items-end" : "items-start"}`}>
+                  {(isImage || isVideo) && msg.media?.url && (
                     <div
-                      className={`text-xs mt-1 flex items-center ${
-                        isOwnMessage
-                          ? "text-green-200 justify-end"
-                          : "text-gray-400 justify-start"
-                      }`}
+                      className={`rounded-2xl overflow-hidden mb-0.5 ${
+                        isOwn ? "rounded-br-sm" : "rounded-bl-sm"
+                      } ${msg.pending ? "opacity-60" : ""}`}
                     >
-                      <span title={new Date(msg.createdAt).toLocaleString()}>
-                        {msg.createdAt
-                          ? new Date(msg.createdAt).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })
-                          : new Date().toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                      </span>
-                      {isOwnMessage && (
-                        <div className="ml-1 flex">
-                          <svg
-                            className="w-4 h-4 text-green-200"
-                            fill="currentColor"
-                            viewBox="0 0 20 20"
-                          >
-                            <path
-                              fillRule="evenodd"
-                              d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                              clipRule="evenodd"
-                            />
-                          </svg>
-                          <svg
-                            className="w-4 h-4 text-green-200 -ml-2"
-                            fill="currentColor"
-                            viewBox="0 0 20 20"
-                          >
-                            <path
-                              fillRule="evenodd"
-                              d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                              clipRule="evenodd"
-                            />
-                          </svg>
-                        </div>
+                      {isImage ? (
+                        <img
+                          src={msg.media.url}
+                          alt="Shared media"
+                          className="max-w-[220px] h-auto max-h-64 object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <video
+                          src={msg.media.url}
+                          controls
+                          className="max-w-[220px] h-auto max-h-64 bg-black"
+                        />
                       )}
                     </div>
+                  )}
+
+                  {msg.content && (
+                    <div
+                      className={`px-3 py-2 rounded-2xl text-sm leading-relaxed break-words transition-opacity ${
+                        isOwn
+                          ? `bg-green-700 text-white rounded-br-sm ${msg.pending ? "opacity-60" : "opacity-100"}`
+                          : "bg-gray-800 text-gray-100 rounded-bl-sm"
+                      }`}
+                      style={{ wordBreak: "break-word" }}
+                    >
+                      {msg.content}
+                    </div>
+                  )}
+
+                  <div className={`flex items-center gap-1 mt-0.5 ${isOwn ? "flex-row-reverse" : ""}`}>
+                    <span className="text-[10px] text-gray-600">{formatTime(msg.createdAt)}</span>
+                    {isOwn && (
+                      <span className={`text-[10px] ${msg.pending ? "text-gray-600" : "text-green-600"}`}>
+                        {msg.pending ? "○" : "✓✓"}
+                      </span>
+                    )}
                   </div>
                 </div>
-              );
-            })
-          )}
+              </div>
+            );
+          })}
+
           <div ref={messageEndRef} />
         </div>
       </div>
 
-      {/* Floating Input area */}
-      <div className="z-10 flex items-end gap-3 p-4 border-t border-green-700 bg-gray-900/90 backdrop-blur-md flex-shrink-0">
-        {/* Hidden file input */}
+      {/* Input */}
+      <div className="z-10 flex items-end gap-2 px-3 py-3 border-t border-green-900/40 bg-gray-900/95 backdrop-blur-md flex-shrink-0">
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*,video/*"
           onChange={handleFileSelect}
           className="hidden"
-          aria-label="Select image or video"
         />
 
-        {/* Attachment button */}
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="flex items-center justify-center w-12 h-12 rounded-full text-gray-400 hover:text-green-400 hover:bg-gray-800 transition-all duration-200 flex-shrink-0"
-          aria-label="Attach image or video"
-          title="Attach image or video"
+          className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-xl text-gray-600 hover:text-green-400 hover:bg-gray-800 transition-all"
         >
-          <svg
-            className="w-6 h-6"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 19l9 2-9-18-9 18 9-2m0 0v-8m0 8l-6-4m6 4l6-4"
-            />
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+              d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
           </svg>
         </button>
 
-        {/* Text input area */}
-        {!filePreview ? (
-          <div className="flex-1 relative">
-            <textarea
-              className="w-full p-3 pr-12 rounded-full bg-gray-800 text-white text-base font-bold focus:outline-none focus:ring-2 focus:ring-green-500 resize-none max-h-32 min-h-[44px] placeholder-gray-500 capitalize"
-              autoCapitalize="sentences"
-              rows={1}
-              value={input}
-              onChange={(e) => {
-                let value = e.target.value;
-                if (value.length > 0) {
-                  value = value.charAt(0).toUpperCase() + value.slice(1);
-                }
+        <div className="flex-1 relative">
+          <textarea
+            className="w-full px-4 py-2.5 rounded-2xl bg-gray-800 text-white text-sm focus:outline-none focus:ring-1 focus:ring-green-700 resize-none max-h-28 min-h-[40px] placeholder-gray-600"
+            rows={1}
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              e.target.style.height = "auto";
+              e.target.style.height = `${e.target.scrollHeight}px`;
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="Message..."
+            disabled={sending}
+            style={{ scrollbarWidth: "none" }}
+          />
+        </div>
 
-                setInput(value);
-                e.target.style.height = "auto";
-                e.target.style.height = `${e.target.scrollHeight}px`;
-              }}
-              onKeyPress={handleKeyPress}
-              placeholder="Type a message"
-              disabled={sending}
-              style={{
-                scrollbarWidth: "none",
-                msOverflowStyle: "none",
-              }}
-              aria-label="Message input"
-            />
-            <button
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-green-400 transition-transform hover:scale-110 active:scale-95"
-              onClick={() => setInput((prev) => prev + "😊")}
-              aria-label="Insert emoji"
-            >
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a1 1 0 100-2 1 1 0 000 2zm7-1a1 1 0 11-2 0 1 1 0 012 0zm-.464 5.535a1 1 0 10-1.415-1.414 3 3 0 01-4.242 0 1 1 0 00-1.415 1.414 5 5 0 007.072 0z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </button>
-          </div>
-        ) : null}
-
-        {/* Send button for text */}
-        {!filePreview && (
-          <button
-            className={`flex items-center justify-center w-12 h-12 rounded-full transition-all duration-200 flex-shrink-0 ${
-              sending || !input.trim()
-                ? "bg-gray-600 text-gray-400 cursor-not-allowed"
-                : "bg-green-600 hover:bg-green-700 text-white hover:scale-105 active:scale-95 shadow-lg"
-            }`}
-            onClick={sendMessage}
-            disabled={sending || !input.trim()}
-            aria-label="Send message"
-          >
-            {sending ? (
-              <svg
-                className="w-5 h-5 animate-spin"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-            ) : (
-              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-              </svg>
-            )}
-          </button>
-        )}
+        <button
+          className={`flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-xl transition-all ${
+            sending || !input.trim()
+              ? "text-gray-700 cursor-not-allowed"
+              : "bg-green-700 hover:bg-green-600 text-white"
+          }`}
+          onClick={sendMessage}
+          disabled={sending || !input.trim()}
+        >
+          {sending ? (
+            <div className="w-4 h-4 border-2 border-green-800 border-t-green-400 rounded-full animate-spin" />
+          ) : (
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+            </svg>
+          )}
+        </button>
       </div>
 
-      {/* Media Preview Modal */}
+      {/* Media preview modal */}
       {filePreview && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end animate-in fade-in">
-          <div className="w-full bg-gray-900 border-t border-green-700 rounded-t-3xl shadow-2xl max-h-[90vh] flex flex-col">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-green-700">
-              <h2 className="text-xl font-bold text-green-300">
-                {filePreview.type === "video"
-                  ? "📹 Share Video"
-                  : "🖼️ Share Image"}
-              </h2>
+        <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm">
+          <div className="w-full bg-gray-900 border-t border-green-900/50 rounded-t-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <span className="text-sm font-medium text-gray-300">
+                {filePreview.type === "video" ? "Send video" : "Send image"}
+              </span>
               <button
                 onClick={cancelMediaSelection}
-                className="text-gray-400 hover:text-red-400 transition-colors"
-                aria-label="Cancel"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors"
               >
-                <svg
-                  className="w-6 h-6"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                    clipRule="evenodd"
-                  />
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
                 </svg>
               </button>
             </div>
 
-            {/* Preview */}
             <div className="flex-1 overflow-y-auto flex items-center justify-center p-4">
               {filePreview.type === "video" ? (
-                <video
-                  src={filePreview.src}
-                  controls
-                  className="max-w-full max-h-80 rounded-lg bg-black"
-                />
+                <video src={filePreview.src} controls className="max-w-full max-h-64 rounded-xl bg-black" />
               ) : (
-                <img
-                  src={filePreview.src}
-                  alt="Preview"
-                  className="max-w-full max-h-80 rounded-lg object-contain"
-                />
+                <img src={filePreview.src} alt="Preview" className="max-w-full max-h-64 rounded-xl object-contain" />
               )}
             </div>
 
-            {/* Caption input */}
-            <div className="border-t border-green-700 p-4">
-              <textarea
-                className="w-full p-3 rounded-lg bg-gray-800 text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none max-h-24 placeholder-gray-500"
-                placeholder="Add a caption (optional)"
+            <div className="px-4 pb-2">
+              <input
+                type="text"
+                className="w-full px-3 py-2.5 rounded-xl bg-gray-800 text-white text-sm focus:outline-none focus:ring-1 focus:ring-green-700 placeholder-gray-600"
+                placeholder="Add a caption..."
                 value={mediaCaption}
                 onChange={(e) => setMediaCaption(e.target.value)}
-                rows={2}
               />
             </div>
 
-            {/* Action buttons */}
-            <div className="flex gap-3 p-4 border-t border-green-700">
+            <div className="flex gap-2 px-4 pb-4 pt-2">
               <button
                 onClick={cancelMediaSelection}
-                className="flex-1 px-4 py-3 rounded-lg bg-gray-700 text-white hover:bg-gray-600 transition-colors font-semibold"
                 disabled={sending}
+                className="flex-1 py-2.5 rounded-xl bg-gray-800 text-gray-400 text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={sendMedia}
-                className={`flex-1 px-4 py-3 rounded-lg transition-all font-semibold flex items-center justify-center gap-2 ${
-                  sending
-                    ? "bg-gray-600 text-gray-400 cursor-not-allowed"
-                    : "bg-green-600 hover:bg-green-700 text-white hover:shadow-lg"
-                }`}
                 disabled={sending}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                  sending
+                    ? "bg-gray-700 text-gray-500 cursor-not-allowed"
+                    : "bg-green-700 hover:bg-green-600 text-white"
+                }`}
               >
                 {sending ? (
                   <>
-                    <svg
-                      className="w-5 h-5 animate-spin"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                      />
-                    </svg>
+                    <div className="w-4 h-4 border-2 border-green-800 border-t-green-400 rounded-full animate-spin" />
                     Sending...
                   </>
                 ) : (
-                  <>
-                    <svg
-                      className="w-5 h-5"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                    </svg>
-                    Send
-                  </>
+                  "Send"
                 )}
               </button>
             </div>
