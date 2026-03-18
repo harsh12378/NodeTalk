@@ -2,6 +2,8 @@ import { useState, useMemo, useEffect, useRef, useLayoutEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { getSocket } from "../socket";
+import { useMessages } from "../hooks/useMessages";
+import { useMessagesSocketSync } from "../hooks/useMessagesSocketSync";
 import API_BASE_URL from "../config";
 import {
   showUserOnlineToast,
@@ -18,11 +20,9 @@ export default function ChattingBox({ receiver, currentUser }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState([]);
   const [sending, setSending] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
   const [chatId, setChatId] = useState(null);
-  const [hasMore, setHasMore] = useState(false);
   const [nextCursor, setNextCursor] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const messageEndRef = useRef(null);
@@ -34,6 +34,15 @@ export default function ChattingBox({ receiver, currentUser }) {
   const fileInputRef = useRef(null);
 
   const currentReceiver = useMemo(() => receiver || {}, [receiver]);
+
+  // Fetch messages using React Query (with automatic caching)
+  const { data: messagesData = {}, isLoading: isLoadingMessages } =
+    useMessages(chatId);
+  const messages = messagesData.data || [];
+  const hasMore = messagesData.pagination?.hasMore || false;
+
+  // Sync new messages to cache via socket
+  useMessagesSocketSync(chatId);
   useLayoutEffect(() => {
     messageEndRef.current?.scrollIntoView();
   }, [messages]);
@@ -43,8 +52,6 @@ export default function ChattingBox({ receiver, currentUser }) {
     if (!currentReceiver?._id) return;
 
     setChatId(null);
-    setMessages([]);
-    setHasMore(false);
     setNextCursor(null);
 
     const getOrCreateChat = async () => {
@@ -71,7 +78,7 @@ export default function ChattingBox({ receiver, currentUser }) {
     getOrCreateChat();
   }, [currentReceiver._id]);
 
-  // ── Step 2: Join room + fetch initial messages when chatId is set ──
+  // ── Step 2: Join room + mark as read when chatId is set ──
   useEffect(() => {
     if (!chatId) return;
 
@@ -86,7 +93,7 @@ export default function ChattingBox({ receiver, currentUser }) {
 
     showConnectedToast(currentReceiver.name);
 
-    // Mark chat as read when opening it (await completion)
+    // Mark chat as read when opening it
     markChatAsRead(chatId)
       .then(() => {
         console.log("✅ Successfully marked chat as read");
@@ -94,8 +101,6 @@ export default function ChattingBox({ receiver, currentUser }) {
       .catch((error) => {
         console.error("❌ Failed to mark chat as read:", error);
       });
-
-    fetchMessages();
   }, [chatId, currentReceiver.name]);
 
   // ── Mark chat as read ───────────────────────────────────────────
@@ -138,111 +143,70 @@ export default function ChattingBox({ receiver, currentUser }) {
     }
   };
 
-  // ── Fetch messages (supports pagination) ───────────────────────
-  const fetchMessages = async (cursor = null) => {
+  // ── Load older messages (pagination) ───────────────────────────
+  const loadMoreMessages = async () => {
+    if (!hasMore || loadingMore || !nextCursor) return;
+    setLoadingMore(true);
     try {
       const token = localStorage.getItem("token");
-      const url = new URL(`${API_BASE_URL}/api/messages/${chatId}`);
-      url.searchParams.set("limit", 30);
-      if (cursor) url.searchParams.set("before", cursor);
-
-      const response = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const params = new URLSearchParams({ limit: 30, before: nextCursor });
+      const response = await fetch(
+        `${API_BASE_URL}/api/messages/${chatId}?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
 
       if (!response.ok) throw new Error("Failed to fetch messages");
 
       const { data, pagination } = await response.json();
 
-      setMessages((prev) => (cursor ? [...data, ...prev] : data));
-      setHasMore(pagination.hasMore);
+      // Update cache with older messages
+      queryClient.setQueryData(["messages", chatId, null], (oldData) => {
+        if (!oldData) return oldData;
+        return {
+          ...oldData,
+          data: [...oldData.data, ...data],
+          pagination,
+        };
+      });
+
       setNextCursor(pagination.nextCursor);
     } catch (err) {
-      console.error("Failed to fetch messages:", err);
+      console.error("Failed to load more messages:", err);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
-  // ── Load older messages (called when user scrolls to top) ──────
-  const loadMoreMessages = async () => {
-    if (!hasMore || loadingMore || !nextCursor) return;
-    setLoadingMore(true);
-    await fetchMessages(nextCursor);
-    setLoadingMore(false);
-  };
-
-  // ── Step 3: Listen for new messages via socket ─────────────────
+  // ── Handle socket reconnection ────────────────────────────────
   useEffect(() => {
     if (!chatId) return;
 
     const socket = getSocket();
-    if (!socket) {
-      console.error("❌ Socket not available for listening");
-      return;
-    }
+    if (!socket) return;
 
-    console.log("👂 Attaching newMessage listener for chatId:", chatId);
-
-    const handleNewMessage = (message) => {
-      console.log("📨 Received newMessage:", message);
-
-      if (message.chatId?.toString() !== chatId?.toString()) {
-        console.log("⏭️  Message not for this chat, ignoring");
-        return;
-      }
-
-      const isOwnMessage = message.senderId?._id === currentUser?._id;
-      console.log(
-        "📋 Processing message - isOwn:",
-        isOwnMessage,
-        "content:",
-        message.content,
-      );
-
-      // If message is from other user, mark as read
-      if (!isOwnMessage) {
-        markChatAsRead(chatId);
-      }
-
-      // Global listener handles toast notifications
-      // This listener focuses on UI updates only
-
-      setMessages((prev) => {
-        if (isOwnMessage) {
-          // Replace optimistic message with real one
-          const hasPending = prev.some(
-            (m) => m.pending && m.content === message.content,
-          );
-          if (hasPending) {
-            console.log("🔄 Replacing optimistic message with real one");
-            return prev.map((m) =>
-              m.pending && m.content === message.content
-                ? { ...message, pending: false }
-                : m,
-            );
-          } else {
-            console.log("⚠️ No pending message found, appending new message");
-            return [...prev, message];
-          }
-        }
-        // Append if it's from the other person
-        console.log("➕ Appending message from other user");
-        return [...prev, message];
-      });
-    };
-
-    // Handle reconnection - rejoin chat room
     const handleReconnect = () => {
       console.log("🔁 Socket reconnected, rejoining chat:", chatId);
       socket.emit("joinChat", chatId);
     };
 
-    socket.on("newMessage", handleNewMessage);
+    const handleNewMessageFromOthers = (message) => {
+      // Only mark as read if it's from other user
+      if (message.chatId?.toString() === chatId?.toString()) {
+        const isOwnMessage = message.senderId?._id === currentUser?._id;
+        if (!isOwnMessage) {
+          markChatAsRead(chatId);
+        }
+      }
+    };
+
     socket.on("connect", handleReconnect);
+    socket.on("newMessage", handleNewMessageFromOthers);
 
     return () => {
-      console.log("🧹 Removing newMessage listener for chatId:", chatId);
-      socket.off("newMessage", handleNewMessage);
       socket.off("connect", handleReconnect);
+      socket.off("newMessage", handleNewMessageFromOthers);
     };
   }, [chatId, currentUser?._id]);
 
@@ -347,29 +311,35 @@ export default function ChattingBox({ receiver, currentUser }) {
 
     setSending(true);
     const tempId = `temp_${Date.now()}`;
-
-    // Optimistic update
     const isVideo = selectedFile.type.startsWith("video/");
-    setMessages((prev) => [
-      ...prev,
-      {
-        _id: tempId,
-        chatId,
-        content: mediaCaption || (isVideo ? "📹 Video" : "🖼️ Image"),
-        messageType: isVideo ? "video" : "image",
-        media: {
-          url: filePreview.src,
-          resourceType: isVideo ? "video" : "image",
-        },
-        senderId: {
-          _id: currentUser._id,
-          name: currentUser.name,
-          avatar: currentUser.avatar,
-        },
-        createdAt: new Date().toISOString(),
-        pending: true,
+
+    // Optimistic update to cache
+    const optimisticMessage = {
+      _id: tempId,
+      chatId,
+      content: mediaCaption || (isVideo ? "📹 Video" : "🖼️ Image"),
+      messageType: isVideo ? "video" : "image",
+      media: {
+        url: filePreview.src,
+        resourceType: isVideo ? "video" : "image",
       },
-    ]);
+      senderId: {
+        _id: currentUser._id,
+        name: currentUser.name,
+        avatar: currentUser.avatar,
+      },
+      createdAt: new Date().toISOString(),
+      pending: true,
+    };
+
+    // Add optimistic message to cache
+    queryClient.setQueryData(["messages", chatId, null], (oldData) => {
+      if (!oldData) return oldData;
+      return {
+        ...oldData,
+        data: [optimisticMessage, ...oldData.data],
+      };
+    });
 
     try {
       const token = localStorage.getItem("token");
@@ -396,7 +366,14 @@ export default function ChattingBox({ receiver, currentUser }) {
     } catch (err) {
       console.error("Send media failed:", err);
       showMessageErrorToast("Failed to send media");
-      setMessages((prev) => prev.filter((m) => m._id !== tempId));
+      // Roll back optimistic update
+      queryClient.setQueryData(["messages", chatId, null], (oldData) => {
+        if (!oldData) return oldData;
+        return {
+          ...oldData,
+          data: oldData.data.filter((m) => m._id !== tempId),
+        };
+      });
     } finally {
       setSending(false);
     }
@@ -411,21 +388,27 @@ export default function ChattingBox({ receiver, currentUser }) {
 
     // Optimistic update
     const tempId = `temp_${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      {
-        _id: tempId,
-        chatId,
-        content: messageText,
-        senderId: {
-          _id: currentUser._id,
-          name: currentUser.name,
-          avatar: currentUser.avatar,
-        },
-        createdAt: new Date().toISOString(),
-        pending: true,
+    const optimisticMessage = {
+      _id: tempId,
+      chatId,
+      content: messageText,
+      senderId: {
+        _id: currentUser._id,
+        name: currentUser.name,
+        avatar: currentUser.avatar,
       },
-    ]);
+      createdAt: new Date().toISOString(),
+      pending: true,
+    };
+
+    // Add optimistic message to cache
+    queryClient.setQueryData(["messages", chatId, null], (oldData) => {
+      if (!oldData) return oldData;
+      return {
+        ...oldData,
+        data: [optimisticMessage, ...oldData.data],
+      };
+    });
 
     try {
       const token = localStorage.getItem("token");
@@ -445,13 +428,21 @@ export default function ChattingBox({ receiver, currentUser }) {
         }),
       });
 
+      if (!response.ok) throw new Error("Failed to send message");
+
       showMessageSentToast();
-      // socket "newMessage" event will replace the optimistic message
+      // socket "newMessage" event will replace the optimistic message via cache
     } catch (err) {
       console.error("Send message failed:", err);
       showMessageErrorToast("Failed to send message");
       // Roll back optimistic message and restore input
-      setMessages((prev) => prev.filter((m) => m._id !== tempId));
+      queryClient.setQueryData(["messages", chatId, null], (oldData) => {
+        if (!oldData) return oldData;
+        return {
+          ...oldData,
+          data: oldData.data.filter((m) => m._id !== tempId),
+        };
+      });
       setInput(messageText);
     } finally {
       setSending(false);
