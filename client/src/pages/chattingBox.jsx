@@ -75,7 +75,14 @@ export default function ChattingBox({ receiver, currentUser }) {
   const hasMore = messagesData.pagination?.hasMore || false;
   const nextCursor = messagesData.pagination?.nextCursor || null;
 
-  useMessagesSocketSync(chatId);
+  useMessagesSocketSync(chatId,currentUser?._id);
+
+  const chatIdFromCache = useMemo(() => {
+    const inbox = queryClient.getQueryData(["inbox"]);
+    if (!inbox) return null;
+    const convo = inbox.find((u) => u._id?.toString() === receiver?._id?.toString());
+    return convo?.chatId || null;
+  }, [receiver?._id, queryClient]);
 
   // ── Auto-scroll only on new messages, not pagination ───────────
   useLayoutEffect(() => {
@@ -92,12 +99,19 @@ export default function ChattingBox({ receiver, currentUser }) {
   // ── Get or create chat ──────────────────────────────────────────
   useEffect(() => {
     if (!currentReceiver?._id) return;
+
     setChatId(null);
+    
+     if (chatIdFromCache) {
+      setChatId(chatIdFromCache);
+      return; // ← skip get-or-create entirely
+    }
     shouldScrollRef.current = true;
     prevMessageCountRef.current = 0;
 
     const getOrCreateChat = async () => {
       try {
+
         const token = localStorage.getItem("token");
         const res = await fetch(`${API_BASE_URL}/api/chat/get-or-create`, {
           method: "POST",
